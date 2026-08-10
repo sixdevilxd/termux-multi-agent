@@ -5,6 +5,11 @@ __pycache__/
 .venv/
 venv/
 
+# tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
 # runtime artifacts — never commit sessions, they contain auth cookies
 storage/sessions/
 storage/runs/
