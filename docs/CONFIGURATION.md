@@ -134,6 +134,15 @@ LLM_BASE_URL=agentrouter.org
 
 Either reaches `claude-opus-5`. Start with `agentrouter`.
 
+> **AgentRouter restricts which client applications may use a key.** Only apps
+> on their whitelist — Claude Code, Codex, Cline, Roo Code, Copilot, Qwen Code
+> — are accepted. A custom API client like this one is refused with
+> `HTTP 401 … "type": "unauthorized_client_error"` and the message
+> *"unauthorized client detected"*, **even when the key is valid**. See
+> [agentrouter-org/docs#21](https://github.com/agentrouter-org/docs/issues/21).
+> Use `openrouter`, `gemini`, `openai` or `anthropic` instead — all of them
+> serve arbitrary API clients.
+
 Model ids differ between gateways — `claude-opus-5` here, but
 `anthropic/claude-opus-5` on OpenRouter. `python run.py --models` prints the
 authoritative list and flags your `LLM_MODEL` if it is not on it.
@@ -169,5 +178,7 @@ chromium   : /usr/bin/chromium
 | `BROWSER_MODE=launch without CHROME_PATH` | On Android/proot you must supply a system browser. |
 | `LLM_MODEL ... is not in this list` | Gateway-specific slug. Copy one from `--models`. |
 | `HTTP 401` / `403` | Bad or expired `LLM_API_KEY`. |
+| `unauthorized client detected` / `unauthorized_client_error` | The gateway rejected the **client**, not the key. AgentRouter only accepts whitelisted apps. Switch provider. |
+| `LLM_BASE_URL points at X, but LLM_PROVIDER=Y normally uses Z` | You switched providers without clearing `LLM_BASE_URL`. |
 | `bot-protection challenge instead of the API` | WAF blocked a datacenter/VPN IP. Disable VPN or use the mirror. |
 | `The gateway returned a web page, not the API` | `LLM_BASE_URL` points at the website, not the API host. |

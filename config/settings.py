@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -162,6 +163,21 @@ class Settings:
                 f"Expected one of: {', '.join(sorted(DEFAULT_BASE_URLS))}."
             )
         return problems
+
+    def warnings(self) -> list[str]:
+        """Non-blocking notes: legal configurations that are usually mistakes."""
+        notes: list[str] = []
+        if self.llm_base_url:
+            default = DEFAULT_BASE_URLS.get(self.llm_provider, "")
+            default_host = urlparse(normalise_base_url(default)).netloc
+            actual_host = urlparse(self.resolved_base_url).netloc
+            if default_host and actual_host and actual_host != default_host:
+                notes.append(
+                    f"LLM_BASE_URL points at {actual_host}, but LLM_PROVIDER="
+                    f"{self.llm_provider} normally uses {default_host}. "
+                    "If you switched providers, clear LLM_BASE_URL."
+                )
+        return notes
 
 
 settings = Settings()

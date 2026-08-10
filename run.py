@@ -38,6 +38,8 @@ def check_config() -> int:
         for p in problems:
             console.print(f"  - {p}")
         return 1
+    for note in settings.warnings():
+        console.print(f"\n[yellow]Warning:[/yellow] {note}")
     console.print("\n[bold green]Configuration looks good.[/bold green]")
     console.print("[dim]Tip: `python run.py --models` lists the exact model ids "
                   "your gateway accepts.[/dim]")

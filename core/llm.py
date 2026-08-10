@@ -171,15 +171,27 @@ class LLMClient:
     @staticmethod
     def _raise_for_status(r: httpx.Response) -> None:
         if r.status_code >= 400:
+            body = r.text[:600]
             hint = ""
-            if r.status_code in (401, 403):
+            if "unauthorized_client" in body:
+                hint = (
+                    " — the gateway rejected the CLIENT, not your key. Some gateways "
+                    "(AgentRouter is one) only accept a whitelist of known apps such as "
+                    "Claude Code or Codex, and refuse anything else. Your key may be "
+                    "perfectly valid. Switch LLM_PROVIDER to a gateway that serves "
+                    "arbitrary API clients — openrouter, gemini, openai or anthropic — "
+                    "and clear LLM_BASE_URL so the provider default is used."
+                )
+            elif r.status_code in (401, 403):
                 hint = " — check LLM_API_KEY."
             elif r.status_code == 404:
                 hint = (
                     " — this host does not serve that API path. Check LLM_BASE_URL, "
                     "or try a different LLM_PROVIDER wire format against the same host."
                 )
-            raise LLMError(f"HTTP {r.status_code} from {r.request.url}{hint}\n{r.text[:400]}")
+            elif r.status_code == 429:
+                hint = " — rate limited or out of quota."
+            raise LLMError(f"HTTP {r.status_code} from {r.request.url}{hint}\n{body}")
 
     @staticmethod
     def _json_body(r: httpx.Response) -> Any:
