@@ -103,7 +103,22 @@ _COLLECT_JS = "() => {" + _SHARED_JS + r"""
     .replace(/\s+/g, ' ')
     .slice(0, 3000);
 
-  return { url: location.href, title: document.title, elements: out, digest };
+  // A welcome dialog or cookie wall hides the actual product. Detect it so the
+  // pipeline can dismiss it before trying to understand the page.
+  const dialog = document.querySelector(
+    '[role="dialog"], [role="alertdialog"], dialog[open], [aria-modal="true"]'
+  );
+  const bodyLocked = document.body
+    ? getComputedStyle(document.body).overflow === 'hidden'
+    : false;
+
+  return {
+    url: location.href,
+    title: document.title,
+    elements: out,
+    digest,
+    modal: !!dialog || bodyLocked,
+  };
 }
 """
 
@@ -139,6 +154,7 @@ class Snapshot:
     title: str
     elements: list[Element]
     digest: str
+    modal: bool = False
 
     def render(self, max_elements: int = 80) -> str:
         """Token-efficient text the LLM actually reads."""
@@ -173,6 +189,7 @@ async def snapshot(page) -> Snapshot:
         title=raw["title"],
         elements=[Element(**e) for e in raw["elements"]],
         digest=raw["digest"],
+        modal=bool(raw.get("modal", False)),
     )
 
 

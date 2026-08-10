@@ -13,6 +13,7 @@ from typing import Any
 from agents.browser_agent import BrowserAgent
 from agents.discovery import DiscoveryAgent
 from agents.login_detector import LoginDetector
+from agents.overlay import OverlayDismisser
 from agents.planner import TaskPlanner
 from agents.reporter import Reporter
 from agents.site_understanding import SiteUnderstanding
@@ -90,10 +91,17 @@ class Orchestrator:
             if not result.ok:
                 raise RuntimeError(f"Could not open {state.target_url}: {result.detail}")
 
+            # A welcome dialog or cookie wall would otherwise be mistaken for
+            # the product itself, so clear it before anything interprets a page.
+            overlay = OverlayDismisser(self.bus, state, browser)
+            await overlay.run()
+
             # 2. authenticate
             state.phase = "login"
             login = LoginDetector(self.bus, state, browser, self.gate, self.llm, self.vault)
             await login.run(self.credentials)
+            # onboarding dialogs commonly appear immediately after signing in
+            await overlay.run()
             state.save()
             if self._cancelled:
                 return await self._finish(state, "cancelled during login")

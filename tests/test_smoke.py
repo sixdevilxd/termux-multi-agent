@@ -375,6 +375,70 @@ def test_disabled_login_control_is_ignored():
     assert LoginDetector.find_login_entry(snap) is None
 
 
+# ── overlay dismissal ────────────────────────────────────────────────────────
+def _btn(index, label, disabled=False):
+    return Element(
+        index=index, tag="button", type="", role="", label=label,
+        href="", id="", name="", disabled=disabled,
+    )
+
+
+def _modal_snap(elements, modal=True):
+    return Snapshot("https://app.example.com", "Home", elements, "welcome", modal)
+
+
+def test_single_button_welcome_dialog_is_dismissed():
+    """The real case: one button, no links, no inputs, body scroll locked."""
+    from agents.overlay import OverlayDismisser
+
+    snap = _modal_snap([_btn(0, "Hello, XIIID")])
+    assert OverlayDismisser.pick_dismiss_control(snap) == 0
+
+
+def test_glyph_close_button_wins():
+    from agents.overlay import OverlayDismisser
+
+    snap = _modal_snap([_btn(0, "Subscribe"), _btn(1, "×")])
+    assert OverlayDismisser.pick_dismiss_control(snap) == 1
+
+
+@pytest.mark.parametrize(
+    "label", ["Got it", "Lanjutkan", "Accept", "Mengerti", "Let's go", "Skip"]
+)
+def test_dismiss_words_are_recognised(label):
+    from agents.overlay import OverlayDismisser
+
+    snap = _modal_snap([_btn(0, "Something else"), _btn(1, label)])
+    assert OverlayDismisser.pick_dismiss_control(snap) == 1
+
+
+@pytest.mark.parametrize("label", ["Delete account", "Bayar sekarang", "Upgrade", "Sign up"])
+def test_dangerous_controls_are_never_pressed(label):
+    from agents.overlay import OverlayDismisser
+
+    snap = _modal_snap([_btn(0, label)])
+    assert OverlayDismisser.pick_dismiss_control(snap) is None
+
+
+def test_busy_page_is_not_treated_as_a_dialog():
+    """Many buttons means this is the app, not an overlay — do not guess."""
+    from agents.overlay import OverlayDismisser
+
+    snap = _modal_snap([_btn(i, f"Item {i}") for i in range(6)])
+    assert OverlayDismisser.pick_dismiss_control(snap) is None
+
+
+def test_disabled_button_is_skipped():
+    from agents.overlay import OverlayDismisser
+
+    snap = _modal_snap([_btn(0, "Got it", disabled=True)])
+    assert OverlayDismisser.pick_dismiss_control(snap) is None
+
+
+def test_snapshot_modal_flag_defaults_off():
+    assert _snap([]).modal is False
+
+
 # ── event bus ────────────────────────────────────────────────────────────────
 def test_bus_delivers_and_isolates_failures():
     bus = EventBus()
