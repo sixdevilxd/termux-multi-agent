@@ -192,8 +192,16 @@ class LoginDetector(Agent):
             self.state.login_method = f"oneclick:{plan.provider_name}"
 
         else:
-            await self.warn("No login flow found on this site.")
-            return False
+            await self.warn(
+                "No standard login form found — requesting manual login confirmation."
+            )
+            answer = await self.gate.ask(
+                "Login UI was not detected automatically. Open the login dialog or SSO/wallet flow in the browser, complete email/password and any approval, then reply 'done'."
+            )
+            if not answer:
+                await self.fail("Login aborted — manual confirmation was skipped.")
+                return False
+            self.state.login_method = "manual"
 
         return await self._resolve_challenges()
 
