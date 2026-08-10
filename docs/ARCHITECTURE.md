@@ -167,6 +167,17 @@ A block is not an exception. It returns `ActionResult(blocked=True)`, is
 appended to the planner's history as *"guardrail refused that control; choose
 another path"*, and the loop continues. The report lists every block.
 
+
+### OAuth corridor (login only)
+
+The domain lock is absolute outside login. While `LoginDetector` is driving an
+SSO flow it flips `Guardrails.allow_oauth_hosts(True)`, which permits navigation
+to a fixed allow-list of identity-provider hosts (Google, Microsoft, Apple,
+GitHub, …). The corridor is closed again as soon as login finishes or aborts.
+The agent never types passwords into those hosts — the human gate owns that
+step. OAuth popups are tracked via Playwright `expect_page` and focused so the
+operator sees the right surface.
+
 ## Human gate
 
 ```
