@@ -221,28 +221,24 @@ class LoginDetector(Agent):
 
             if OTP_HINTS.search(text):
                 await self.emit("gate", "OTP required — asking you for the code.")
-                code = await self.gate.ask("Enter the OTP / verification code:")
+                code = await self.gate.ask(
+                    "Enter the OTP / verification code. It will be typed into the browser only.",
+                    secret=True,
+                )
                 if not code:
                     return False
-                otp_field = next(
-                    (
-                        e
-                        for e in snap.elements
-                        if e.tag in {"input"}
-                        and e.type in {"text", "tel", "number", ""}
-                        and not e.disabled
-                    ),
-                    None,
+                otp_field = _find_otp_field(snap)
+                if otp_field is None:
+                    await self.warn("OTP was provided, but no verification field was detected.")
+                    continue
+                await self.browser.execute(
+                    {
+                        "action": "fill",
+                        "index": otp_field.index,
+                        "text": self._stash("otp", code),
+                    }
                 )
-                if otp_field:
-                    await self.browser.execute(
-                        {
-                            "action": "fill",
-                            "index": otp_field.index,
-                            "text": self._stash("otp", code),
-                        }
-                    )
-                    await self.browser.execute({"action": "press", "key": "Enter"})
+                await self.browser.execute({"action": "press", "key": "Enter"})
                 continue
 
             # nothing recognisable changed — assume the flow finished or stalled
@@ -256,6 +252,22 @@ class LoginDetector(Agent):
         else:
             await self.warn("Could not confirm authentication.")
         return self.state.logged_in
+
+
+def _find_otp_field(snap: Snapshot):
+    """Choose the verification input instead of accidentally refilling email."""
+    candidates = []
+    for element in snap.elements:
+        if element.tag != "input" or element.disabled:
+            continue
+        label = f"{element.label} {element.name} {element.id}".lower()
+        if OTP_HINTS.search(label):
+            candidates.append((4, element))
+        elif element.type in {"tel", "number"}:
+            candidates.append((3, element))
+        elif element.type in {"text", ""}:
+            candidates.append((1, element))
+    return max(candidates, key=lambda item: item[0])[1] if candidates else None
 
 
 def _has_password_field(snap: Snapshot) -> bool:
