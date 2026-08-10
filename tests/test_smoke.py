@@ -439,6 +439,63 @@ def test_snapshot_modal_flag_defaults_off():
     assert _snap([]).modal is False
 
 
+# ── stored credentials ───────────────────────────────────────────────────────
+def _creds_settings(**kw):
+    from config.settings import Settings
+
+    base = dict(
+        llm_provider="agentrouter",
+        llm_api_key="k",
+        login_email="me@example.com",
+        login_password="hunter2secret",
+    )
+    base.update(kw)
+    return Settings(**base)
+
+
+def test_credentials_are_used_on_the_bound_host():
+    s = _creds_settings(login_domain="app.example.com")
+    assert s.credentials_for("https://app.example.com/login") == {
+        "email": "me@example.com",
+        "password": "hunter2secret",
+    }
+
+
+def test_credentials_are_withheld_from_other_hosts():
+    s = _creds_settings(login_domain="app.example.com")
+    assert s.credentials_for("https://evil.test/login") == {}
+
+
+def test_credentials_cover_subdomains_of_the_bound_host():
+    s = _creds_settings(login_domain="example.com")
+    assert s.credentials_for("https://app.example.com/") != {}
+
+
+def test_www_prefix_does_not_break_the_binding():
+    s = _creds_settings(login_domain="www.example.com")
+    assert s.credentials_for("https://example.com/") != {}
+
+
+def test_unbound_credentials_are_used_anywhere_but_warned_about():
+    s = _creds_settings(login_domain="")
+    assert s.credentials_for("https://anything.test/") != {}
+    assert any("LOGIN_DOMAIN is empty" in w for w in s.warnings())
+
+
+def test_no_credentials_means_no_dict_and_no_warning():
+    from config.settings import Settings
+
+    s = Settings(llm_provider="agentrouter", llm_api_key="k")
+    assert not s.has_stored_credentials
+    assert s.credentials_for("https://app.example.com/") == {}
+    assert s.warnings() == []
+
+
+def test_half_configured_credentials_are_ignored():
+    s = _creds_settings(login_password="")
+    assert s.credentials_for("https://app.example.com/") == {}
+
+
 # ── event bus ────────────────────────────────────────────────────────────────
 def test_bus_delivers_and_isolates_failures():
     bus = EventBus()

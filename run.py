@@ -36,6 +36,11 @@ def check_config() -> int:
     if settings.browser_args:
         console.print(f"extra args : {' '.join(settings.browser_args)}")
     console.print(f"dry run    : {settings.dry_run}")
+    if settings.has_stored_credentials:
+        bound = settings.login_host or "ANY SITE (unbound)"
+        console.print(f"login creds: stored, bound to {bound}")
+    else:
+        console.print("login creds: none stored — the bot will ask on Telegram")
     console.print(f"max actions: {settings.max_actions}")
     console.print(f"storage    : {settings.storage_dir}")
     console.print(f"telegram   : {'configured' if settings.telegram_token else 'MISSING'}")

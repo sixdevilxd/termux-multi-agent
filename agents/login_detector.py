@@ -159,6 +159,8 @@ class LoginDetector(Agent):
 
         if plan.method == "form":
             creds = credentials or {}
+            if creds.get("email") and creds.get("password"):
+                await self.info("Using the credentials stored in .env for this host.")
             email = creds.get("email") or await self.gate.ask("Email / username for login?")
             password = creds.get("password") or await self.gate.ask(
                 "Password? (typed straight into the site — never sent to the AI model)",

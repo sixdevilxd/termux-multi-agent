@@ -47,7 +47,9 @@ class Orchestrator:
         self.state = RunState(target_url=target_url)
         self.bus = bus
         self.gate = human_gate
-        self.credentials = credentials or {}
+        # Fall back to credentials stored in .env, but only if they were bound
+        # to this target's host.
+        self.credentials = credentials or settings.credentials_for(target_url)
         self.max_tasks = max_tasks
         self.guardrails = Guardrails(target_url)
         # One vault per run. The LLM client is bound to it so every prompt is

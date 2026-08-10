@@ -55,6 +55,19 @@ HEADLESS=true
 # Per-navigation timeout, milliseconds
 NAV_TIMEOUT_MS=30000
 
+# ─── Site login (optional) ─────────────────────────────────────────────────
+# Credentials for the site you automate. Leave blank and the bot will ask you
+# on Telegram instead, once per session.
+#
+# These never reach the AI model: they go straight into the run's secret vault
+# and are resolved only in the instruction before the browser types them.
+#
+# LOGIN_DOMAIN binds them to one host. WITHOUT IT, anyone who can send
+# /run <url> can have your password typed into a site of their choosing.
+LOGIN_EMAIL=
+LOGIN_PASSWORD=
+LOGIN_DOMAIN=
+
 # ─── Safety ────────────────────────────────────────────────────────────────
 # true = reason about everything, click nothing. Use this on a new site first.
 DRY_RUN=false
@@ -95,6 +108,9 @@ LOG_LEVEL=INFO
 | `LLM_BASE_URL` | provider default | Host only; scheme and API path are derived |
 | `CLAUDE_BIN` | `claude` | `claude_cli` only — path to the Claude Code binary |
 | `CLAUDE_TIMEOUT` | `180` | `claude_cli` only — seconds per generation |
+| `LOGIN_EMAIL` | *(empty)* | Stored site login; blank means ask on Telegram |
+| `LOGIN_PASSWORD` | *(empty)* | Stored site password |
+| `LOGIN_DOMAIN` | *(empty)* | Host the credentials may be used on — **set this** |
 | `BROWSER_MODE` | `cdp` | `launch` starts a browser; `cdp` attaches to one |
 | `CHROME_PATH` | *(empty)* | System Chromium binary for `launch` mode |
 | `BROWSER_ARGS` | *(empty)* | Extra Chromium flags, comma separated |
@@ -189,6 +205,44 @@ Trade-offs worth knowing:
 Model ids differ between gateways — `claude-opus-5` here, but
 `anthropic/claude-opus-5` on OpenRouter. `python run.py --models` prints the
 authoritative list and flags your `LLM_MODEL` if it is not on it.
+
+---
+
+## Stored site credentials
+
+Set `LOGIN_EMAIL` and `LOGIN_PASSWORD` and the agent logs in without asking.
+Leave them blank and it asks on Telegram instead, once per session — the saved
+browser session then keeps you signed in for later runs.
+
+```ini
+LOGIN_EMAIL=you@example.com
+LOGIN_PASSWORD=your-password
+LOGIN_DOMAIN=xclass.xiiid.ai
+```
+
+**Always set `LOGIN_DOMAIN`.** The bot runs whatever URL it is given, so
+unbound credentials can be typed into any site someone sends to `/run`. With
+the binding in place, a run against another host silently falls back to asking
+on Telegram. `LOGIN_DOMAIN` accepts any spelling — `example.com`,
+`www.example.com`, `https://app.example.com/` — and subdomains of the bound
+host are included.
+
+`run.py --check` reports the binding without ever printing the values:
+
+```
+login creds: stored, bound to xclass.xiiid.ai
+```
+
+The credentials are vaulted the moment they are read: the planner, the run
+state, the logs and the report only ever see `{{secret:s1}}`, and every prompt
+is scrubbed before it leaves for the model. See
+[ARCHITECTURE.md](ARCHITECTURE.md#credential-isolation).
+
+Your `.env` still holds a plaintext password, so restrict it:
+
+```bash
+chmod 600 .env
+```
 
 ---
 

@@ -79,6 +79,14 @@ class Settings:
     claude_bin: str = os.getenv("CLAUDE_BIN", "claude").strip() or "claude"
     claude_timeout: int = _int("CLAUDE_TIMEOUT", 180)
 
+    # Optional stored credentials for the target site. They go straight into
+    # the vault at run time, so they never reach a model, a log or the report.
+    # LOGIN_DOMAIN binds them to one host: without it, anyone who can send
+    # /run <url> could have them typed into a site of their choosing.
+    login_email: str = os.getenv("LOGIN_EMAIL", "").strip()
+    login_password: str = os.getenv("LOGIN_PASSWORD", "")
+    login_domain: str = os.getenv("LOGIN_DOMAIN", "")
+
     # browser
     browser_mode: str = os.getenv("BROWSER_MODE", "cdp").strip().lower()
     cdp_url: str = os.getenv("CDP_URL", "http://127.0.0.1:9222")
@@ -102,6 +110,31 @@ class Settings:
     # storage
     storage_dir: Path = Path(os.getenv("STORAGE_DIR", "./storage")).resolve()
     log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
+
+    @property
+    def has_stored_credentials(self) -> bool:
+        return bool(self.login_email and self.login_password)
+
+    @property
+    def login_host(self) -> str:
+        """LOGIN_DOMAIN reduced to a bare host, however it was written."""
+        raw = self.login_domain.strip().lower()
+        if not raw:
+            return ""
+        if "//" in raw:
+            raw = urlparse(normalise_base_url(raw)).netloc
+        return raw.strip("/").removeprefix("www.")
+
+    def credentials_for(self, url: str) -> dict[str, str]:
+        """Stored credentials, but only for the host they were bound to."""
+        if not self.has_stored_credentials:
+            return {}
+        bound = self.login_host
+        if bound:
+            host = urlparse(normalise_base_url(url)).netloc.lower().removeprefix("www.")
+            if host != bound and not host.endswith("." + bound):
+                return {}
+        return {"email": self.login_email, "password": self.login_password}
 
     @property
     def is_local_provider(self) -> bool:
@@ -210,6 +243,12 @@ class Settings:
                     f"{self.llm_provider} normally uses {default_host}. "
                     "If you switched providers, clear LLM_BASE_URL."
                 )
+        if self.has_stored_credentials and not self.login_host:
+            notes.append(
+                "LOGIN_EMAIL/LOGIN_PASSWORD are set but LOGIN_DOMAIN is empty — they "
+                "will be typed into whatever site is passed to /run. Set LOGIN_DOMAIN "
+                "to the host they belong to."
+            )
         return notes
 
 
