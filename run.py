@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import shutil
 import sys
 
 from config.settings import settings
@@ -20,10 +21,15 @@ log = get_logger("main")
 
 def check_config() -> int:
     problems = settings.validate()
-    console.print(f"provider   : {settings.llm_provider} / {settings.llm_model}")
-    console.print(f"base url   : {settings.resolved_base_url}")
-    console.print(f"api root   : {settings.api_root}  [dim](path is derived)[/dim]")
-    console.print(f"api key    : {'set' if settings.llm_api_key else 'MISSING'}")
+    console.print(f"provider   : {settings.llm_provider} / {settings.llm_model or '(cli default)'}")
+    if settings.is_local_provider:
+        console.print(f"claude bin : {shutil.which(settings.claude_bin) or 'NOT FOUND'}")
+        console.print(f"timeout    : {settings.claude_timeout}s")
+        console.print("credential : held by the claude CLI, not by this process")
+    else:
+        console.print(f"base url   : {settings.resolved_base_url}")
+        console.print(f"api root   : {settings.api_root}  [dim](path is derived)[/dim]")
+        console.print(f"api key    : {'set' if settings.llm_api_key else 'MISSING'}")
     console.print(f"browser    : {settings.browser_mode} ({settings.cdp_url})")
     if settings.chrome_path:
         console.print(f"chromium   : {settings.chrome_path}")

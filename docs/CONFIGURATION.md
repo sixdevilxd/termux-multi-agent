@@ -90,9 +90,11 @@ LOG_LEVEL=INFO
 | `TELEGRAM_BOT_TOKEN` | — | **Required.** Bot token from @BotFather |
 | `TELEGRAM_ALLOWED_USERS` | — | **Required.** Allowed numeric user ids, comma separated |
 | `LLM_API_KEY` | — | **Required.** Gateway API key |
-| `LLM_PROVIDER` | `agentrouter` | `agentrouter` · `openai` · `anthropic` · `gemini` · `openrouter` |
+| `LLM_PROVIDER` | `agentrouter` | `agentrouter` · `openai` · `anthropic` · `gemini` · `openrouter` · `claude_cli` |
 | `LLM_MODEL` | `claude-opus-5` | Exact gateway model id |
 | `LLM_BASE_URL` | provider default | Host only; scheme and API path are derived |
+| `CLAUDE_BIN` | `claude` | `claude_cli` only — path to the Claude Code binary |
+| `CLAUDE_TIMEOUT` | `180` | `claude_cli` only — seconds per generation |
 | `BROWSER_MODE` | `cdp` | `launch` starts a browser; `cdp` attaches to one |
 | `CHROME_PATH` | *(empty)* | System Chromium binary for `launch` mode |
 | `BROWSER_ARGS` | *(empty)* | Extra Chromium flags, comma separated |
@@ -118,6 +120,7 @@ LOG_LEVEL=INFO
 | `openrouter` | `openrouter.ai/api` | `/v1/chat/completions` | OpenAI |
 | `anthropic` | `api.anthropic.com` | `/v1/messages` | Anthropic |
 | `gemini` | `generativelanguage.googleapis.com` | `/v1beta/models/...` | Gemini |
+| `claude_cli` | *(none — local process)* | `claude --print` | Claude Code CLI |
 
 **You only ever configure the host.** `agentrouter.org`,
 `https://agentrouter.org` and `https://agentrouter.org/v1` all resolve to the
@@ -141,7 +144,47 @@ Either reaches `claude-opus-5`. Start with `agentrouter`.
 > *"unauthorized client detected"*, **even when the key is valid**. See
 > [agentrouter-org/docs#21](https://github.com/agentrouter-org/docs/issues/21).
 > Use `openrouter`, `gemini`, `openai` or `anthropic` instead — all of them
-> serve arbitrary API clients.
+> serve arbitrary API clients. Or use `claude_cli` below, which routes through
+> Claude Code itself.
+
+### `claude_cli` — generate through the Claude Code CLI
+
+Instead of speaking HTTP, this provider shells out to Claude Code in headless
+mode (`claude --print --output-format json`).
+
+The point is **client identity**. Gateways that whitelist applications accept
+Claude Code, so if that is where your credits live, this is how the agents
+reach them. The request is genuinely issued by Claude Code, with whatever
+`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` that CLI is already configured
+with — this project never sees the credential.
+
+```ini
+LLM_PROVIDER=claude_cli
+LLM_MODEL=                 # blank = whatever the CLI defaults to
+LLM_API_KEY=               # not used
+LLM_BASE_URL=              # not used
+# CLAUDE_BIN=claude        # override if it is not on PATH
+# CLAUDE_TIMEOUT=180       # seconds per generation
+```
+
+Set the CLI up first, then confirm it answers before pointing the bot at it:
+
+```bash
+export ANTHROPIC_AUTH_TOKEN="..."
+export ANTHROPIC_BASE_URL="https://agentrouter.org"
+claude -p "say pong"
+```
+
+Trade-offs worth knowing:
+
+- **Slower.** Every generation spawns a process. Expect several seconds of
+  overhead per call, and a run makes tens of calls.
+- **No temperature control.** The flag is ignored.
+- **No model list.** `run.py --models` cannot work; run `claude` interactively
+  and use `/model`.
+- **Tools are disabled** on purpose — this path is text generation, not an
+  agent that acts. Claude Code is invoked with `--max-turns 1` and
+  `--disallowedTools Bash,Read,Write,Edit,...`.
 
 Model ids differ between gateways — `claude-opus-5` here, but
 `anthropic/claude-opus-5` on OpenRouter. `python run.py --models` prints the

@@ -6,6 +6,7 @@ compiled on Termux.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any
@@ -72,9 +73,11 @@ class LLMClient:
         await self._client.aclose()
 
     async def chat(self, system: str, user: str, temperature: float = 0.1) -> str:
+        system, user = self._scrub(system), self._scrub(user)
+        if self.provider == "claude_cli":
+            return await self._claude_cli(system, user)
         if not self.api_key:
             raise LLMError("LLM_API_KEY is not set.")
-        system, user = self._scrub(system), self._scrub(user)
         if self.provider == "anthropic":
             return await self._anthropic(system, user, temperature)
         if self.provider == "gemini":
@@ -91,6 +94,12 @@ class LLMClient:
         Handy for OpenAI-compatible routers where the exact slug
         (e.g. `claude-opus-5`) is only visible once you are authenticated.
         """
+        if self.provider == "claude_cli":
+            raise LLMError(
+                "claude_cli has no model list endpoint. Run `claude` interactively and "
+                "use /model to see what your gateway offers, then put that id in "
+                "LLM_MODEL (or leave it blank to use the CLI's own default)."
+            )
         if not self.api_key:
             raise LLMError("LLM_API_KEY is not set.")
         if self.provider == "gemini":
@@ -118,6 +127,74 @@ class LLMClient:
         )
 
     # ── providers ────────────────────────────────────────────────────────────
+    async def _claude_cli(self, system: str, user: str) -> str:
+        """Generate through the Claude Code CLI in headless mode.
+
+        The point of this provider is client identity: some gateways only
+        accept a whitelist of known applications and refuse a bespoke HTTP
+        client outright. Here the request is genuinely issued by Claude Code,
+        using whatever ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN that CLI is
+        already configured with — this process never sees the credential.
+
+        Tools are disabled: we want text generation, not an agent that acts.
+        """
+        cmd = [
+            settings.claude_bin,
+            "--print",
+            "--output-format", "json",
+            "--max-turns", "1",
+            "--system-prompt", system,
+            "--disallowedTools",
+            "Bash,Read,Write,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch,Glob,Grep,Task",
+        ]
+        if self.model:
+            cmd += ["--model", self.model]
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError:
+            raise LLMError(
+                f"{settings.claude_bin!r} is not on PATH. Install Claude Code with "
+                "`npm install -g @anthropic-ai/claude-code`, or set CLAUDE_BIN to its "
+                "full path."
+            ) from None
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(user.encode()), timeout=settings.claude_timeout
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise LLMError(
+                f"The claude CLI did not answer within {settings.claude_timeout}s. "
+                "Raise CLAUDE_TIMEOUT, or use a faster model."
+            ) from None
+
+        if proc.returncode != 0:
+            detail = stderr.decode(errors="replace").strip()[:400] or "no stderr"
+            raise LLMError(f"claude exited with code {proc.returncode}: {detail}")
+
+        raw = stdout.decode(errors="replace").strip()
+        if not raw:
+            raise LLMError("claude returned nothing on stdout.")
+
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return raw  # --output-format json not honoured; treat as plain text
+
+        if isinstance(payload, dict):
+            if payload.get("is_error") or payload.get("subtype") == "error":
+                raise LLMError(f"claude reported an error: {str(payload)[:400]}")
+            return str(payload.get("result", raw))
+        return raw
+
     async def _openai_compatible(self, system: str, user: str, temperature: float) -> str:
         r = await self._client.post(
             f"{self.api_root}/chat/completions",

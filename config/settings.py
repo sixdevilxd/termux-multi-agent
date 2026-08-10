@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
@@ -40,6 +41,12 @@ DEFAULT_BASE_URLS = {
 # Providers that speak the OpenAI /chat/completions wire format.
 OPENAI_COMPATIBLE = {"openai", "openrouter", "agentrouter"}
 
+# Providers that are a local process rather than an HTTP endpoint. They need no
+# API key and no base URL — whatever the CLI is already configured with is used.
+LOCAL_PROVIDERS = {"claude_cli"}
+
+ALL_PROVIDERS = set(DEFAULT_BASE_URLS) | LOCAL_PROVIDERS
+
 
 def normalise_base_url(url: str) -> str:
     """Accept `agentrouter.org`, `https://agentrouter.org/`, `.../v1` alike."""
@@ -64,6 +71,13 @@ class Settings:
     llm_model: str = os.getenv("LLM_MODEL", "claude-opus-5")
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
     llm_base_url: str = os.getenv("LLM_BASE_URL", "")
+
+    # claude_cli provider: delegate generation to the Claude Code CLI. Useful
+    # when a gateway only whitelists known client apps — the request is then
+    # genuinely made by Claude Code, with whatever ANTHROPIC_BASE_URL and
+    # ANTHROPIC_AUTH_TOKEN that CLI is already configured with.
+    claude_bin: str = os.getenv("CLAUDE_BIN", "claude").strip() or "claude"
+    claude_timeout: int = _int("CLAUDE_TIMEOUT", 180)
 
     # browser
     browser_mode: str = os.getenv("BROWSER_MODE", "cdp").strip().lower()
@@ -90,8 +104,14 @@ class Settings:
     log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
     @property
+    def is_local_provider(self) -> bool:
+        return self.llm_provider in LOCAL_PROVIDERS
+
+    @property
     def resolved_base_url(self) -> str:
         """The host the client talks to, without any API path appended."""
+        if self.is_local_provider:
+            return ""
         return normalise_base_url(
             self.llm_base_url
             or DEFAULT_BASE_URLS.get(self.llm_provider, DEFAULT_BASE_URLS["agentrouter"])
@@ -110,6 +130,8 @@ class Settings:
         `agentrouter.org` and `https://agentrouter.org/v1` both work.
         """
         base = self.resolved_base_url
+        if not base:
+            return ""
         if self.llm_provider == "gemini":
             return base
         return base if base.endswith("/v1") else base + "/v1"
@@ -142,8 +164,24 @@ class Settings:
     def validate(self) -> list[str]:
         """Return a list of human-readable configuration problems."""
         problems: list[str] = []
-        if not self.llm_api_key:
-            problems.append("LLM_API_KEY is empty — the reasoning agents cannot run.")
+
+        if self.is_local_provider:
+            if not shutil.which(self.claude_bin):
+                problems.append(
+                    f"LLM_PROVIDER={self.llm_provider} needs the {self.claude_bin!r} "
+                    "command on PATH. Install it with "
+                    "`npm install -g @anthropic-ai/claude-code`, or set CLAUDE_BIN "
+                    "to its full path."
+                )
+        else:
+            if not self.llm_api_key:
+                problems.append("LLM_API_KEY is empty — the reasoning agents cannot run.")
+            if self.llm_provider not in ALL_PROVIDERS:
+                problems.append(
+                    f"Unknown LLM_PROVIDER {self.llm_provider!r}. "
+                    f"Expected one of: {', '.join(sorted(ALL_PROVIDERS))}."
+                )
+
         if self.browser_mode not in {"cdp", "launch"}:
             problems.append(f"BROWSER_MODE must be 'cdp' or 'launch', got {self.browser_mode!r}.")
         if self.chrome_path and not Path(self.chrome_path).exists():
@@ -157,17 +195,12 @@ class Settings:
                 "own browser. That works on desktop Linux (after `playwright install "
                 "chromium`) but not on Android — set CHROME_PATH to a system Chromium."
             )
-        if self.llm_provider not in DEFAULT_BASE_URLS:
-            problems.append(
-                f"Unknown LLM_PROVIDER {self.llm_provider!r}. "
-                f"Expected one of: {', '.join(sorted(DEFAULT_BASE_URLS))}."
-            )
         return problems
 
     def warnings(self) -> list[str]:
         """Non-blocking notes: legal configurations that are usually mistakes."""
         notes: list[str] = []
-        if self.llm_base_url:
+        if self.llm_base_url and not self.is_local_provider:
             default = DEFAULT_BASE_URLS.get(self.llm_provider, "")
             default_host = urlparse(normalise_base_url(default)).netloc
             actual_host = urlparse(self.resolved_base_url).netloc
