@@ -301,3 +301,19 @@ chromium   : /usr/bin/chromium
 | `LLM_BASE_URL points at X, but LLM_PROVIDER=Y normally uses Z` | You switched providers without clearing `LLM_BASE_URL`. |
 | `bot-protection challenge instead of the API` | WAF blocked a datacenter/VPN IP. Disable VPN or use the mirror. |
 | `The gateway returned a web page, not the API` | `LLM_BASE_URL` points at the website, not the API host. |
+
+
+## Google / SSO login
+
+Identity providers (especially Google) reject headless and scripted password
+entry. For any site that uses "Continue with Google" (or Microsoft/Apple/GitHub):
+
+| Variable | Recommended |
+| --- | --- |
+| `HEADLESS` | `false` |
+| `HUMAN_GATE_TIMEOUT` | `900` or higher |
+| `REQUIRE_LOGIN` | `true` |
+| `LOGIN_EMAIL` / `LOGIN_PASSWORD` | only for **native** site forms — never Google's password |
+
+Flow: agent opens the provider → you finish login in the browser → reply
+`done` on Telegram → session saved under `storage/sessions/`.

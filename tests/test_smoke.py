@@ -24,6 +24,73 @@ def test_domain_lock():
     assert not g.check_url("https://evil.test/steal")
 
 
+
+def test_oauth_corridor_closed_by_default():
+    g = Guardrails("https://app.example.com/home")
+    assert not g.check_url("https://accounts.google.com/o/oauth2/auth")
+    assert not g.check_url("https://login.microsoftonline.com/common/oauth2")
+
+
+def test_oauth_corridor_allows_idp_during_login():
+    g = Guardrails("https://app.example.com/home")
+    g.allow_oauth_hosts(True)
+    assert g.check_url("https://accounts.google.com/o/oauth2/auth")
+    assert g.check_url("https://login.microsoftonline.com/common/oauth2")
+    assert g.check_url("https://github.com/login/oauth/authorize")
+    # still blocks random third parties
+    assert not g.check_url("https://evil.test/steal")
+    g.allow_oauth_hosts(False)
+    assert not g.check_url("https://accounts.google.com/o/oauth2/auth")
+
+
+def test_login_detects_google_oneclick():
+    import asyncio
+
+    from agents.login_detector import LoginDetector
+    from core.bus import EventBus
+    from core.state import RunState
+
+    def el(index, tag, type_, label, href="", name="", id_=""):
+        return Element(
+            index=index,
+            tag=tag,
+            type=type_,
+            role="",
+            label=label,
+            href=href,
+            id=id_,
+            name=name,
+            disabled=False,
+        )
+
+    snap = Snapshot(
+        url="https://app.example.com/login",
+        title="Login",
+        elements=[
+            el(1, "button", "button", "Continue with Google"),
+            el(2, "a", "", "Home", href="/"),
+        ],
+        digest="Sign in to continue",
+    )
+
+    class _B:
+        pass
+
+    detector = LoginDetector(
+        EventBus(), RunState(target_url="https://app.example.com"), _B(), None
+    )
+    plan = asyncio.run(detector.detect(snap))
+    assert plan.method == "oneclick"
+    assert "google" in plan.provider_name.lower()
+    assert detector._is_sso_provider(plan.provider_name)
+
+
+def test_login_failure_hint_mentions_sso():
+    from agents.orchestrator import login_failure_hint
+
+    text = login_failure_hint(False, "manual:google")
+    assert "SSO" in text or "Google" in text or "browser" in text
+
 @pytest.mark.parametrize(
     "label",
     ["Delete account", "Withdraw funds", "Checkout now", "Hapus data", "Bayar sekarang"],

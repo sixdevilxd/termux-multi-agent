@@ -89,14 +89,39 @@ The agent does not assume every site behaves the same way.
 | --- | --- |
 | **Already authenticated** | A saved session is restored; login is skipped entirely. |
 | **Email + password** | Fields located by type and metadata, filled from the vault, submitted, verified. |
-| **One-click sign-in** | "Continue with Google", "Sign in with X", wallet buttons — detected and followed. |
+| **Google / Microsoft / Apple / GitHub SSO** | Provider button is opened (popup-aware). **You** finish the IdP login in the browser; reply `done` on Telegram. The site session is saved. |
+| **Wallet / other one-click** | Same manual corridor — the agent never forges signatures or IdP passwords. |
+| **Unknown login UI** | Falls back to manual confirmation instead of failing closed. |
 | **OTP** | Run pauses. Telegram asks you for the code. You reply. Run resumes. |
 | **CAPTCHA** | Run pauses. You solve it. The agent detects success and continues. |
 
-Credentials are isolated by construction, not by convention: the vault issues
-opaque tokens, the DOM snapshot never reads a secret field's value, a sensitive
-field can only be filled from a token, and every prompt is redacted before
-egress. Full detail and the threat model are in
+### Google login (recommended workflow)
+
+Google actively blocks automated password entry. Do **not** put a Google
+password in `LOGIN_PASSWORD`. Use:
+
+```ini
+HEADLESS=false
+REQUIRE_LOGIN=true
+HUMAN_GATE_TIMEOUT=900
+```
+
+1. Start Chromium visible (CDP on Termux) and the bot.
+2. Send the target URL.
+3. When Telegram asks, complete Google sign-in **yourself** in the browser
+   (account picker, password, 2FA, CAPTCHA).
+4. Wait until you are back on the target site, logged in.
+5. Reply `done`.
+6. Next runs on that domain reuse `storage/sessions/<domain>.json` and skip SSO.
+
+During login only, the domain lock temporarily allows known identity-provider
+hosts (`accounts.google.com`, `login.microsoftonline.com`, …). After login the
+corridor closes again.
+
+Credentials for *native site forms* are isolated by construction, not by
+convention: the vault issues opaque tokens, the DOM snapshot never reads a
+secret field's value, a sensitive field can only be filled from a token, and
+every prompt is redacted before egress. Full detail and the threat model are in
 [ARCHITECTURE.md](docs/ARCHITECTURE.md#credential-isolation);
 `tests/test_credential_safety.py` proves it against a fake page.
 
