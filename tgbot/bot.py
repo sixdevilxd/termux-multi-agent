@@ -21,27 +21,36 @@ from agents.reporter import Reporter
 from config.settings import settings
 from core.bus import Event, EventBus
 from core.logger import get_logger
+from chatbox.agent import ChatboxAgent
 from tgbot.human_gate import HumanGate
 
 log = get_logger("telegram")
 
-HELP = """*Multi-Agent Web Runner*
+HELP = """*Bright Scout* — chatbox + web runner
 
-/run `<url>` — start a run on a website
-/status — what the agents are doing right now
-/reply `<token>` `<answer>` — answer a human gate (OTP, password, ...)
-/skip `<token>` — refuse a gate and let the run continue
-/stop — cancel the current run
-/report — resend the last report
-/help — this message
+Ngobrol biasa aja (tanpa command):
+• coding / fix bug
+• market crypto, scan token baru, sentimen
+• buat/import wallet (kunci tidak dikirim ke chat)
+• cari berita di web
+• tanya DLMM / LP
 
-The bot only accepts commands from the user IDs in `TELEGRAM_ALLOWED_USERS`."""
+Web automation (masih ada):
+/run `<url>` — jalankan agent di website
+/status · /stop · /report
+/reply `<token>` `<answer>` · /skip `<token>`
+
+Tips:
+• Kirim URL polos = langsung /run
+• Saat gate OTP/login terbuka, pesan teks = jawaban gate
+• Hanya user di `TELEGRAM_ALLOWED_USERS`"""
 
 
 class AgentBot:
     def __init__(self) -> None:
         self.bus = EventBus()
         self.gate = HumanGate()
+        self.chatbox = ChatboxAgent()
         self.app: Application | None = None
         self.chat_id: int | None = None
         self.orchestrator: Orchestrator | None = None
@@ -183,15 +192,57 @@ class AgentBot:
         )
 
     async def on_text(self, update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """A bare message answers the oldest open gate — faster than typing tokens."""
+        """Human-gate reply, bare URL run, or natural chatbox conversation."""
         if not self._authorised(update):
             return
-        if self.gate.open_question and self.gate.answer_latest(update.message.text.strip()):
+        self.chat_id = update.effective_chat.id
+        text = (update.message.text or "").strip()
+        if not text:
+            return
+
+        # 1) Open human gate always wins (OTP / password / done)
+        if self.gate.open_question and self.gate.answer_latest(text):
             await update.message.reply_text("Accepted.")
             try:
                 await update.message.delete()
             except Exception:
                 pass
+            return
+
+        # 2) Bare URL (or "run/jalanin <url>") starts a website run
+        run_url = self.chatbox.extract_run_url(text)
+        if run_url:
+            if self.task and not self.task.done():
+                await update.message.reply_text("A run is already in progress. /stop it first.")
+                return
+            url = run_url if run_url.startswith(("http://", "https://")) else "https://" + run_url
+            problems = settings.validate()
+            if problems:
+                await update.message.reply_text("Config problems:\n- " + "\n- ".join(problems))
+                return
+            self.orchestrator = Orchestrator(url, self.bus, self.gate)
+            await update.message.reply_text(
+                f"Starting run `{self.orchestrator.state.run_id}` on `{url}`",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            self.task = asyncio.create_task(self._run_pipeline())
+            return
+
+        # 3) Natural chatbox (coding, crypto, research, wallets, ...)
+        if self.app is not None:
+            await self.app.bot.send_chat_action(chat_id=self.chat_id, action="typing")
+        try:
+            answer = await self.chatbox.reply(self.chat_id, text)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("chatbox failed")
+            answer = f"Chat error: `{exc}`"
+        # Telegram message limit ~4096
+        if len(answer) > 4000:
+            answer = answer[:3990] + "…"
+        try:
+            await update.message.reply_text(answer, parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            await update.message.reply_text(answer)
 
     # ── entry point ──────────────────────────────────────────────────────────
     def build(self) -> Application:
