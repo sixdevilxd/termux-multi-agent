@@ -328,6 +328,53 @@ def test_invalid_browser_mode_is_reported():
     assert any("BROWSER_MODE" in p for p in s.validate())
 
 
+# ── login entry discovery ────────────────────────────────────────────────────
+def _el(index, label, href="", tag="a", disabled=False):
+    return Element(
+        index=index, tag=tag, type="", role="", label=label,
+        href=href, id="", name="", disabled=disabled,
+    )
+
+
+def _snap(elements):
+    return Snapshot("https://app.example.com", "Home", elements, "welcome")
+
+
+def test_login_link_is_found_by_href():
+    from agents.login_detector import LoginDetector
+
+    snap = _snap([_el(0, "Home", "/"), _el(1, "Sign in", "/login")])
+    assert LoginDetector.find_login_entry(snap) == 1
+
+
+def test_login_link_is_found_by_indonesian_label():
+    from agents.login_detector import LoginDetector
+
+    snap = _snap([_el(0, "Beranda", "/"), _el(1, "Masuk", "/akun")])
+    assert LoginDetector.find_login_entry(snap) == 1
+
+
+def test_sign_in_is_preferred_over_sign_up():
+    from agents.login_detector import LoginDetector
+
+    snap = _snap([_el(0, "Sign up", "/register"), _el(1, "Log in", "/login")])
+    assert LoginDetector.find_login_entry(snap) == 1
+
+
+def test_no_login_affordance_returns_none():
+    from agents.login_detector import LoginDetector
+
+    snap = _snap([_el(0, "Pricing", "/pricing"), _el(1, "Docs", "/docs")])
+    assert LoginDetector.find_login_entry(snap) is None
+
+
+def test_disabled_login_control_is_ignored():
+    from agents.login_detector import LoginDetector
+
+    snap = _snap([_el(0, "Sign in", "/login", disabled=True)])
+    assert LoginDetector.find_login_entry(snap) is None
+
+
 # ── event bus ────────────────────────────────────────────────────────────────
 def test_bus_delivers_and_isolates_failures():
     bus = EventBus()

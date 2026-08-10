@@ -22,6 +22,10 @@ LOGGED_IN_HINTS = re.compile(
     r"\b(log ?out|sign ?out|keluar|my account|dashboard|profile|settings)\b", re.I
 )
 LOGIN_HINTS = re.compile(r"\b(log ?in|sign ?in|masuk|continue with|get started)\b", re.I)
+# A landing page often only *links* to the login page. These spot that entry point.
+LOGIN_WORD_RE = re.compile(r"\b(log ?in|sign ?in|masuk|login|signin)\b", re.I)
+SIGNUP_WORD_RE = re.compile(r"\b(sign ?up|register|daftar|create account)\b", re.I)
+LOGIN_PATH_RE = re.compile(r"/(log-?in|sign-?in|masuk|auth|session|account/login)\b", re.I)
 OTP_HINTS = re.compile(r"\b(otp|one[- ]time|verification code|kode verifikasi|2fa|authenticator)\b", re.I)
 CAPTCHA_HINTS = re.compile(r"\b(captcha|recaptcha|hcaptcha|verify you are human|robot)\b", re.I)
 
@@ -100,9 +104,52 @@ class LoginDetector(Agent):
         return LoginPlan("unknown", notes=["no recognisable login affordance"])
 
     # ── execution ────────────────────────────────────────────────────────────
+    @staticmethod
+    def find_login_entry(snap: Snapshot) -> int | None:
+        """Index of the control most likely to lead to a login page.
+
+        Landing pages usually do not carry the form itself — they link to it.
+        Without this, detection gives up on the home page and the whole run
+        proceeds anonymously, which hides every reward that needs an account.
+        """
+        best: tuple[int, int] | None = None
+        for element in snap.elements:
+            if element.disabled:
+                continue
+            score = 0
+            if element.href and LOGIN_PATH_RE.search(element.href):
+                score += 3
+            if LOGIN_WORD_RE.search(element.label):
+                score += 2
+            if SIGNUP_WORD_RE.search(element.label):
+                score -= 1  # prefer sign-in over sign-up when both are present
+            if score > 0 and (best is None or score > best[0]):
+                best = (score, element.index)
+        return best[1] if best else None
+
+    async def _follow_login_entry(self, snap: Snapshot) -> bool:
+        index = self.find_login_entry(snap)
+        if index is None:
+            return False
+        element = snap.find(index)
+        await self.info(
+            f"No login form on this page — following {element.label!r} to find one."
+        )
+        result = await self.browser.execute({"action": "click", "index": index})
+        if not result.ok:
+            return False
+        await self.browser.execute({"action": "wait", "ms": 1500})
+        return True
+
     async def run(self, credentials: dict[str, str] | None = None) -> bool:
         snap = await self.browser.refresh()
         plan = await self.detect(snap)
+
+        # The form may live one click away. Try that before giving up.
+        if plan.method == "unknown" and await self._follow_login_entry(snap):
+            snap = await self.browser.refresh()
+            plan = await self.detect(snap)
+
         await self.info(f"Login strategy detected: {plan.method}")
 
         if plan.method == "none":
