@@ -7,6 +7,37 @@ If you want native Termux instead, see [SETUP-TERMUX.md](SETUP-TERMUX.md).
 
 ---
 
+## Already have Debian and Chromium? Start here
+
+Skip steps 1 and 2 entirely. Inside Debian, in the cloned repo:
+
+```bash
+git pull
+
+apt-get install -y python3-venv python3-full
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -U pip wheel
+pip install -r requirements.txt
+
+which chromium          # note the path
+cp .env.example .env
+nano .env
+```
+
+Add to `.env`, alongside the three required values:
+
+```ini
+BROWSER_MODE=launch
+CHROME_PATH=/usr/bin/chromium     # whatever `which chromium` printed
+```
+
+Then jump to [Step 5 — Verify](#step-5--verify-one-check-at-a-time).
+
+The rest of this document is the from-scratch path.
+
+---
+
 ## Step 0 — Two values from Telegram, before anything else
 
 The bot **refuses to start** if it does not know who is allowed to command it.
