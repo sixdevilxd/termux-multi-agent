@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from agents.base import Agent
 from browser.dom import Snapshot, selector_for, snapshot as take_snapshot
 from browser.driver import BrowserDriver
+from config.settings import settings
 from core.bus import EventBus
 from core.guardrails import Guardrails
 from core.llm import LLMClient
@@ -20,6 +21,10 @@ from core.secrets import SecretVault
 from core.state import RunState
 
 VALID_ACTIONS = {"goto", "click", "fill", "press", "select", "scroll", "wait", "screenshot"}
+
+# Prefer a real document event, then fall back to "commit" (headers received).
+# Heavy SPAs / slow mobile networks often miss domcontentloaded within the budget.
+_GOTO_WAIT_CHAIN = ("domcontentloaded", "commit")
 
 
 @dataclass(slots=True)
@@ -123,8 +128,7 @@ class BrowserAgent(Agent):
     async def _perform(self, kind: str, action: dict[str, Any], extra: dict[str, Any]) -> str:
         if kind == "goto":
             url = str(action["url"])
-            await self.page.goto(url, wait_until="domcontentloaded")
-            return url
+            return await self._goto(url, attempts=int(action.get("attempts", 3)))
 
         if kind == "wait":
             ms = int(action.get("ms", 1500))
@@ -195,10 +199,83 @@ class BrowserAgent(Agent):
 
         return "no-op"
 
+    async def _goto(self, url: str, attempts: int = 3) -> str:
+        """Navigate with softer wait states and retries.
+
+        Termux + CDP + flaky mobile networks often exceed a single
+        domcontentloaded budget even when the host is up. We:
+          1. try wait_until=domcontentloaded, then commit
+          2. retry a few times with backoff
+          3. accept a partial load if the page URL already matches the target host
+        """
+        timeout = max(5_000, int(settings.nav_timeout_ms))
+        last_error: Exception | None = None
+        target_host = urlparse(url).netloc.lower().removeprefix("www.")
+        attempts = max(1, attempts)
+
+        for attempt in range(1, attempts + 1):
+            for wait_until in _GOTO_WAIT_CHAIN:
+                try:
+                    await self.page.goto(url, wait_until=wait_until, timeout=timeout)
+                    extra_note = "" if wait_until == "domcontentloaded" else f" via {wait_until}"
+                    if attempt > 1:
+                        extra_note += f" (attempt {attempt})"
+                    return f"{url}{extra_note}"
+                except Exception as exc:
+                    last_error = exc
+                    msg = str(exc).lower()
+                    # Abort immediately on hard DNS / refused errors — retry won't help.
+                    if any(
+                        token in msg
+                        for token in (
+                            "err_name_not_resolved",
+                            "err_connection_refused",
+                            "err_connection_reset",
+                            "err_ssl",
+                            "net::err_blocked",
+                        )
+                    ) and "timeout" not in msg:
+                        raise
+                    await self.warn(
+                        f"goto {wait_until} failed (attempt {attempt}/{attempts}): {exc}"
+                    )
+
+            # Soft success: browser already landed on the target host despite the error.
+            try:
+                current = self.page.url or ""
+                current_host = urlparse(current).netloc.lower().removeprefix("www.")
+                if (
+                    current_host
+                    and target_host
+                    and (
+                        current_host == target_host
+                        or current_host.endswith("." + target_host)
+                        or target_host.endswith("." + current_host)
+                    )
+                    and not current.startswith("chrome-error://")
+                    and current not in {"about:blank", "about:newtab"}
+                ):
+                    await self.warn(
+                        f"goto timed out but page is on {current_host} — continuing with partial load"
+                    )
+                    return f"{current} (partial after timeout)"
+            except Exception:
+                pass
+
+            if attempt < attempts:
+                await asyncio.sleep(min(2.0 * attempt, 6.0))
+
+        assert last_error is not None
+        raise last_error
+
     async def _settle(self) -> None:
         """Give SPAs a moment; never let a hung network call stall the run."""
         try:
-            await self.page.wait_for_load_state("networkidle", timeout=5000)
+            await self.page.wait_for_load_state("domcontentloaded", timeout=3_000)
+        except Exception:
+            pass
+        try:
+            await self.page.wait_for_load_state("networkidle", timeout=5_000)
         except Exception:
             await asyncio.sleep(0.5)
 

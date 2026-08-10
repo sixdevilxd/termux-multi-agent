@@ -121,9 +121,22 @@ class Orchestrator:
 
             # 1. open the target
             state.phase = "open"
-            result = await browser.execute({"action": "goto", "url": state.target_url})
+            result = await browser.execute(
+                {"action": "goto", "url": state.target_url, "attempts": 3}
+            )
             if not result.ok:
-                raise RuntimeError(f"Could not open {state.target_url}: {result.detail}")
+                hint = (
+                    "Navigation timed out before the page finished loading. "
+                    "On Termux this is often a slow network, a stuck Chromium CDP tab, "
+                    "or NAV_TIMEOUT_MS too low — try: open the URL once in the same "
+                    "Chromium window, set NAV_TIMEOUT_MS=90000, confirm CDP is alive, "
+                    "then re-run."
+                    if "timeout" in (result.detail or "").lower()
+                    else result.detail
+                )
+                raise RuntimeError(f"Could not open {state.target_url}: {hint}")
+            if "partial" in (result.detail or "").lower():
+                state.notes.append(f"opened with partial navigation: {result.detail}")
 
             # A welcome dialog or cookie wall would otherwise be mistaken for
             # the product itself, so clear it before anything interprets a page.

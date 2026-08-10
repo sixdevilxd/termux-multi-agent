@@ -101,7 +101,7 @@ class Settings:
     # --single-process,--no-zygote to start at all.
     browser_args: tuple[str, ...] = field(default_factory=lambda: tuple(_csv("BROWSER_ARGS")))
     headless: bool = _bool("HEADLESS", True)
-    nav_timeout_ms: int = _int("NAV_TIMEOUT_MS", 30_000)
+    nav_timeout_ms: int = _int("NAV_TIMEOUT_MS", 60_000)
 
     # safety
     dry_run: bool = _bool("DRY_RUN", False)

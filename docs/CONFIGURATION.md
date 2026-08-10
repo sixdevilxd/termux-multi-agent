@@ -53,7 +53,7 @@ CDP_URL=http://127.0.0.1:9222
 HEADLESS=true
 
 # Per-navigation timeout, milliseconds
-NAV_TIMEOUT_MS=30000
+NAV_TIMEOUT_MS=60000
 
 # ─── Site login (optional) ─────────────────────────────────────────────────
 # Credentials for the site you automate. Leave blank and the bot will ask you
@@ -317,3 +317,15 @@ entry. For any site that uses "Continue with Google" (or Microsoft/Apple/GitHub)
 
 Flow: agent opens the provider → you finish login in the browser → reply
 `done` on Telegram → session saved under `storage/sessions/`.
+
+## Navigation timeouts (Termux)
+
+If a run dies with `Page.goto: Timeout ... exceeded` before login:
+
+| Check | Fix |
+| --- | --- |
+| Chromium CDP alive? | Re-open Chromium with remote debugging; confirm `CDP_URL` |
+| Site opens manually in that same Chromium? | If not, it's network/DNS on the phone — not the agent |
+| Slow SPA / mobile data | `NAV_TIMEOUT_MS=90000` (or higher) |
+| Stuck blank tab | Close extra tabs; leave one clean tab; re-run |
+| Still failing after page is visible | Pull latest — `goto` retries with `commit` fallback and accepts partial loads on the target host |
