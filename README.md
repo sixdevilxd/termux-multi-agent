@@ -66,7 +66,17 @@ Minimum you must fill in:
 ```ini
 TELEGRAM_BOT_TOKEN=...        # from @BotFather
 TELEGRAM_ALLOWED_USERS=...    # your numeric id, from @userinfobot
-LLM_API_KEY=...               # OpenRouter / OpenAI / Anthropic / Gemini
+
+LLM_PROVIDER=agentrouter
+LLM_MODEL=claude-opus-5
+LLM_API_KEY=sk-...            # from https://agentrouter.org/console
+```
+
+Confirm the key and model actually work before your first run:
+
+```bash
+python run.py --models claude   # list the exact model ids the gateway accepts
+python run.py --ping            # send one test completion
 ```
 
 Start the browser, then the bot:
@@ -129,13 +139,35 @@ Every knob lives in `.env` (see `.env.example`).
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LLM_PROVIDER` | `openrouter` | `openai` · `anthropic` · `gemini` · `openrouter` |
+| `LLM_PROVIDER` | `agentrouter` | `agentrouter` · `openai` · `anthropic` · `gemini` · `openrouter` |
+| `LLM_MODEL` | `claude-opus-5` | Exact gateway model id — check with `--models` |
+| `LLM_BASE_URL` | *(provider default)* | Override; OpenAI-compatible gateways need a trailing `/v1` |
 | `BROWSER_MODE` | `cdp` | `cdp` attaches to a running Chromium; `launch` lets Playwright start one |
 | `CDP_URL` | `http://127.0.0.1:9222` | Where the browser is listening |
 | `DRY_RUN` | `false` | Plan everything, click nothing |
 | `MAX_ACTIONS` | `120` | Hard ceiling on browser actions per run |
 | `MAX_DISCOVERY_PAGES` | `25` | Crawl budget |
 | `HUMAN_GATE_TIMEOUT` | `600` | Seconds a gate waits for you |
+
+### Providers
+
+| Provider | Base URL | Wire format |
+| --- | --- | --- |
+| `agentrouter` | `https://agentrouter.org/v1` | OpenAI |
+| `openai` | `https://api.openai.com/v1` | OpenAI |
+| `openrouter` | `https://openrouter.ai/api/v1` | OpenAI |
+| `anthropic` | `https://api.anthropic.com/v1` | Anthropic messages |
+| `gemini` | `https://generativelanguage.googleapis.com/v1beta` | Gemini |
+
+AgentRouter is an OpenAI-compatible gateway, so `claude-opus-5` is reached through
+`/v1/chat/completions` rather than Anthropic's native endpoint — keep
+`LLM_PROVIDER=agentrouter`, not `anthropic`. Users in mainland China can point
+`LLM_BASE_URL` at the mirror `https://ps.air-outer.com/v1`.
+
+Model ids differ between gateways (`claude-opus-5` here vs
+`anthropic/claude-opus-5` on OpenRouter). `python run.py --models` prints the
+authoritative list for whichever gateway you configured and flags your
+`LLM_MODEL` if it is not on it.
 
 ---
 
@@ -155,6 +187,31 @@ agents/                base · browser · login · discovery · miner
 tgbot/bot.py           Telegram commands
 tgbot/human_gate.py    OTP/CAPTCHA suspension
 ```
+
+---
+
+## Troubleshooting
+
+**`bot-protection challenge instead of the API`**
+AgentRouter sits behind an Aliyun WAF that serves an HTML challenge to
+datacenter and VPN addresses. Run from a normal mobile or home connection, or
+switch `LLM_BASE_URL` to the mirror `https://ps.air-outer.com/v1`.
+
+**`HTTP 401` / `403`**
+Bad or expired `LLM_API_KEY`. Regenerate it at the provider console.
+
+**`HTTP 404` on `/chat/completions`**
+`LLM_BASE_URL` is missing the trailing `/v1`.
+
+**`LLM_MODEL ... is not in this list`**
+Model ids are gateway-specific. Copy an exact id from `python run.py --models`.
+
+**`connect_over_cdp` refused**
+Chromium is not running, or not listening on `CDP_URL`. Start it with
+`./scripts/start_chromium.sh &` and confirm with `curl http://127.0.0.1:9222/json/version`.
+
+**Run dies when the screen locks**
+Android suspended Termux. Run `termux-wake-lock` before starting.
 
 ---
 

@@ -21,6 +21,8 @@ log = get_logger("main")
 def check_config() -> int:
     problems = settings.validate()
     console.print(f"provider   : {settings.llm_provider} / {settings.llm_model}")
+    console.print(f"base url   : {settings.resolved_base_url}")
+    console.print(f"api key    : {'set' if settings.llm_api_key else 'MISSING'}")
     console.print(f"browser    : {settings.browser_mode} ({settings.cdp_url})")
     console.print(f"dry run    : {settings.dry_run}")
     console.print(f"max actions: {settings.max_actions}")
@@ -32,6 +34,54 @@ def check_config() -> int:
             console.print(f"  - {p}")
         return 1
     console.print("\n[bold green]Configuration looks good.[/bold green]")
+    console.print("[dim]Tip: `python run.py --models` lists the exact model ids "
+                  "your gateway accepts.[/dim]")
+    return 0
+
+
+async def list_models(filter_text: str = "") -> int:
+    """Print every model id the configured gateway exposes."""
+    from core.llm import LLMClient
+
+    client = LLMClient()
+    try:
+        models = await client.list_models()
+    except Exception as exc:
+        console.print(f"[red]Could not list models:[/red] {exc}")
+        return 1
+    finally:
+        await client.aclose()
+
+    if filter_text:
+        models = [m for m in models if filter_text.lower() in m.lower()]
+
+    console.print(f"[bold]{len(models)} model(s)[/bold] on {settings.resolved_base_url}\n")
+    for model in models:
+        marker = " [green]<- LLM_MODEL[/green]" if model == settings.llm_model else ""
+        console.print(f"  {model}{marker}")
+
+    if settings.llm_model not in models and not filter_text:
+        console.print(
+            f"\n[yellow]Warning:[/yellow] LLM_MODEL={settings.llm_model!r} "
+            "is not in this list. Copy an exact id from above into .env."
+        )
+    return 0
+
+
+async def ping() -> int:
+    """Prove the key, base URL and model all work together."""
+    from core.llm import LLMClient
+
+    client = LLMClient()
+    console.print(f"Calling {settings.llm_model} at {settings.resolved_base_url} ...")
+    try:
+        reply = await client.ping()
+    except Exception as exc:
+        console.print(f"[red]Failed:[/red] {exc}")
+        return 1
+    finally:
+        await client.aclose()
+    console.print(f"[green]OK[/green] — model replied: {reply.strip()[:120]!r}")
     return 0
 
 
@@ -68,6 +118,11 @@ def main() -> int:
     parser.add_argument("--url", help="run once against this URL and exit")
     parser.add_argument("--max-tasks", type=int, default=10, help="cap tasks per run")
     parser.add_argument("--check", action="store_true", help="validate config and exit")
+    parser.add_argument(
+        "--models", nargs="?", const="", metavar="FILTER",
+        help="list model ids the gateway accepts (optionally filtered, e.g. --models claude)",
+    )
+    parser.add_argument("--ping", action="store_true", help="send one test completion and exit")
     args = parser.parse_args()
 
     setup_logging()
@@ -75,6 +130,12 @@ def main() -> int:
 
     if args.check:
         return check_config()
+
+    if args.models is not None:
+        return asyncio.run(list_models(args.models))
+
+    if args.ping:
+        return asyncio.run(ping())
 
     if args.bot:
         if not settings.telegram_token:

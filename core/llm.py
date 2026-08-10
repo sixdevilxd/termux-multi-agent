@@ -75,6 +75,38 @@ class LLMClient:
         system = system + "\n\nRespond with raw JSON only. No prose, no code fences."
         return extract_json(await self.chat(system, user, temperature))
 
+    async def list_models(self) -> list[str]:
+        """Ask the gateway which model ids it actually accepts.
+
+        Handy for OpenAI-compatible routers where the exact slug
+        (e.g. `claude-opus-5`) is only visible once you are authenticated.
+        """
+        if not self.api_key:
+            raise LLMError("LLM_API_KEY is not set.")
+        if self.provider == "gemini":
+            r = await self._client.get(f"{self.base_url}/models", params={"key": self.api_key})
+            self._raise_for_status(r)
+            return sorted(
+                m.get("name", "").removeprefix("models/") for m in self._json_body(r).get("models", [])
+            )
+
+        headers = (
+            {"x-api-key": self.api_key, "anthropic-version": "2023-06-01"}
+            if self.provider == "anthropic"
+            else {"Authorization": f"Bearer {self.api_key}"}
+        )
+        r = await self._client.get(f"{self.base_url}/models", headers=headers)
+        self._raise_for_status(r)
+        payload = self._json_body(r)
+        rows = payload.get("data", payload if isinstance(payload, list) else [])
+        return sorted(str(m.get("id", m)) if isinstance(m, dict) else str(m) for m in rows)
+
+    async def ping(self) -> str:
+        """Round-trip one tiny completion to prove the key and model work."""
+        return await self.chat(
+            "You are a connectivity probe.", "Reply with exactly: pong", temperature=0.0
+        )
+
     # ── providers ────────────────────────────────────────────────────────────
     async def _openai_compatible(self, system: str, user: str, temperature: float) -> str:
         r = await self._client.post(
@@ -90,7 +122,7 @@ class LLMClient:
             },
         )
         self._raise_for_status(r)
-        return r.json()["choices"][0]["message"]["content"]
+        return self._json_body(r)["choices"][0]["message"]["content"]
 
     async def _anthropic(self, system: str, user: str, temperature: float) -> str:
         r = await self._client.post(
@@ -108,7 +140,7 @@ class LLMClient:
             },
         )
         self._raise_for_status(r)
-        return "".join(b.get("text", "") for b in r.json().get("content", []))
+        return "".join(b.get("text", "") for b in self._json_body(r).get("content", []))
 
     async def _gemini(self, system: str, user: str, temperature: float) -> str:
         r = await self._client.post(
@@ -121,7 +153,7 @@ class LLMClient:
             },
         )
         self._raise_for_status(r)
-        cands = r.json().get("candidates", [])
+        cands = self._json_body(r).get("candidates", [])
         if not cands:
             raise LLMError("Gemini returned no candidates.")
         return "".join(p.get("text", "") for p in cands[0]["content"]["parts"])
@@ -129,4 +161,36 @@ class LLMClient:
     @staticmethod
     def _raise_for_status(r: httpx.Response) -> None:
         if r.status_code >= 400:
-            raise LLMError(f"{r.status_code} from LLM provider: {r.text[:400]}")
+            hint = ""
+            if r.status_code in (401, 403):
+                hint = " — check LLM_API_KEY."
+            elif r.status_code == 404:
+                hint = " — check LLM_BASE_URL (OpenAI-compatible gateways need a trailing /v1)."
+            raise LLMError(f"HTTP {r.status_code} from {r.request.url}{hint}\n{r.text[:400]}")
+
+    @staticmethod
+    def _json_body(r: httpx.Response) -> Any:
+        """Decode a response body, explaining clearly when it is not JSON."""
+        try:
+            return r.json()
+        except ValueError:
+            body = r.text.strip()[:200].replace("\n", " ")
+            lowered = body.lower()
+            if any(tag in lowered for tag in ("waf", "captcha", "cf-browser", "challenge")):
+                cause = (
+                    "The gateway served a bot-protection challenge instead of the API. "
+                    "This usually means the request came from a datacenter/VPN IP — "
+                    "retry from a normal mobile or home connection."
+                )
+            elif "<!doctype html" in lowered or "<html" in lowered:
+                cause = (
+                    "The gateway returned a web page, not the API. Check LLM_BASE_URL — "
+                    "OpenAI-compatible gateways must end in /v1."
+                )
+            else:
+                cause = "The gateway returned a non-JSON body."
+            raise LLMError(
+                f"{cause}\nURL: {r.request.url}\n"
+                f"Content-Type: {r.headers.get('content-type', 'unknown')} "
+                f"(HTTP {r.status_code})\nBody starts: {body!r}"
+            ) from None

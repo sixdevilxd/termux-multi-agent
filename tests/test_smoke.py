@@ -101,6 +101,42 @@ def test_extract_json_survives_chatty_models(raw):
     assert extract_json(raw) == {"tasks": []}
 
 
+# ── provider configuration ───────────────────────────────────────────────────
+def test_agentrouter_defaults_to_v1_base_url():
+    from config.settings import Settings
+
+    s = Settings(llm_provider="agentrouter", llm_base_url="", llm_api_key="k")
+    assert s.resolved_base_url == "https://agentrouter.org/v1"
+    assert s.is_openai_compatible
+    assert s.validate() == []
+
+
+def test_openai_compatible_base_url_must_end_with_v1():
+    from config.settings import Settings
+
+    s = Settings(
+        llm_provider="agentrouter",
+        llm_base_url="https://agentrouter.org",
+        llm_api_key="k",
+    )
+    assert any("/v1" in p for p in s.validate())
+
+
+def test_anthropic_is_not_openai_compatible():
+    from config.settings import Settings
+
+    s = Settings(llm_provider="anthropic", llm_base_url="", llm_api_key="k")
+    assert not s.is_openai_compatible
+    assert s.validate() == []
+
+
+def test_unknown_provider_is_reported():
+    from config.settings import Settings
+
+    s = Settings(llm_provider="nope", llm_api_key="k")
+    assert any("Unknown LLM_PROVIDER" in p for p in s.validate())
+
+
 # ── event bus ────────────────────────────────────────────────────────────────
 def test_bus_delivers_and_isolates_failures():
     bus = EventBus()

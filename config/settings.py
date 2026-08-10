@@ -31,7 +31,13 @@ DEFAULT_BASE_URLS = {
     "openrouter": "https://openrouter.ai/api/v1",
     "anthropic": "https://api.anthropic.com/v1",
     "gemini": "https://generativelanguage.googleapis.com/v1beta",
+    # OpenAI-compatible gateway. The trailing /v1 is required.
+    # China mainland fallback: https://ps.air-outer.com/v1
+    "agentrouter": "https://agentrouter.org/v1",
 }
+
+# Providers that speak the OpenAI /chat/completions wire format.
+OPENAI_COMPATIBLE = {"openai", "openrouter", "agentrouter"}
 
 
 @dataclass(frozen=True)
@@ -45,8 +51,8 @@ class Settings:
     )
 
     # llm
-    llm_provider: str = os.getenv("LLM_PROVIDER", "openrouter").strip().lower()
-    llm_model: str = os.getenv("LLM_MODEL", "anthropic/claude-3.5-sonnet")
+    llm_provider: str = os.getenv("LLM_PROVIDER", "agentrouter").strip().lower()
+    llm_model: str = os.getenv("LLM_MODEL", "claude-opus-5")
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
     llm_base_url: str = os.getenv("LLM_BASE_URL", "")
 
@@ -70,8 +76,12 @@ class Settings:
     @property
     def resolved_base_url(self) -> str:
         return self.llm_base_url or DEFAULT_BASE_URLS.get(
-            self.llm_provider, DEFAULT_BASE_URLS["openrouter"]
+            self.llm_provider, DEFAULT_BASE_URLS["agentrouter"]
         )
+
+    @property
+    def is_openai_compatible(self) -> bool:
+        return self.llm_provider in OPENAI_COMPATIBLE
 
     @property
     def sessions_dir(self) -> Path:
@@ -106,7 +116,15 @@ class Settings:
         if self.browser_mode not in {"cdp", "launch"}:
             problems.append(f"BROWSER_MODE must be 'cdp' or 'launch', got {self.browser_mode!r}.")
         if self.llm_provider not in DEFAULT_BASE_URLS:
-            problems.append(f"Unknown LLM_PROVIDER {self.llm_provider!r}.")
+            problems.append(
+                f"Unknown LLM_PROVIDER {self.llm_provider!r}. "
+                f"Expected one of: {', '.join(sorted(DEFAULT_BASE_URLS))}."
+            )
+        if self.is_openai_compatible and not self.resolved_base_url.rstrip("/").endswith("/v1"):
+            problems.append(
+                f"{self.llm_provider} needs a base URL ending in /v1 — got "
+                f"{self.resolved_base_url!r}. Fix LLM_BASE_URL."
+            )
         return problems
 
 
