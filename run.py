@@ -25,6 +25,10 @@ def check_config() -> int:
     console.print(f"api root   : {settings.api_root}  [dim](path is derived)[/dim]")
     console.print(f"api key    : {'set' if settings.llm_api_key else 'MISSING'}")
     console.print(f"browser    : {settings.browser_mode} ({settings.cdp_url})")
+    if settings.chrome_path:
+        console.print(f"chromium   : {settings.chrome_path}")
+    if settings.browser_args:
+        console.print(f"extra args : {' '.join(settings.browser_args)}")
     console.print(f"dry run    : {settings.dry_run}")
     console.print(f"max actions: {settings.max_actions}")
     console.print(f"storage    : {settings.storage_dir}")

@@ -58,6 +58,40 @@ The agent is given one standing goal:
 
 ---
 
+### Already running Debian in Termux?
+
+`proot-distro` Debian is the better host: glibc means pip wheels build without a
+fight, and proot shares Termux's network stack, so `127.0.0.1` is the same
+localhost on both sides. Use the Debian bootstrap instead of `setup_termux.sh`:
+
+```bash
+# in Termux
+pkg install -y proot-distro
+proot-distro login debian
+
+# now inside Debian
+apt-get update && apt-get install -y git
+git clone https://github.com/sixdevilxd/termux-multi-agent
+cd termux-multi-agent
+bash scripts/setup_debian.sh
+```
+
+That script installs Chromium, builds a virtualenv, finds the Chromium binary
+and writes `BROWSER_MODE=launch` + `CHROME_PATH` into `.env` for you — so
+Playwright drives the system browser directly and there is **no separate CDP
+process to start or babysit**.
+
+```bash
+. .venv/bin/activate     # every new Debian session
+nano .env                # the three required values
+python run.py --check    # confirms CHROME_PATH resolves
+python run.py --bot
+```
+
+Run `termux-wake-lock` in **Termux**, not in Debian.
+
+---
+
 ## Quick start (Termux)
 
 ```bash
@@ -191,7 +225,9 @@ Every knob lives in `.env` (see `.env.example`).
 | `LLM_MODEL` | `claude-opus-5` | Exact gateway model id — check with `--models` |
 | `LLM_BASE_URL` | *(provider default)* | Host only — scheme and API path are added for you |
 | `BROWSER_MODE` | `cdp` | `cdp` attaches to a running Chromium; `launch` lets Playwright start one |
-| `CDP_URL` | `http://127.0.0.1:9222` | Where the browser is listening |
+| `CDP_URL` | `http://127.0.0.1:9222` | Where the browser is listening (`cdp` mode) |
+| `CHROME_PATH` | *(empty)* | System Chromium binary for `launch` mode — required on Android/proot |
+| `BROWSER_ARGS` | *(empty)* | Extra Chromium flags, comma separated |
 | `DRY_RUN` | `false` | Plan everything, click nothing |
 | `MAX_ACTIONS` | `120` | Hard ceiling on browser actions per run |
 | `MAX_DISCOVERY_PAGES` | `25` | Crawl budget |
@@ -275,6 +311,20 @@ Model ids are gateway-specific. Copy an exact id from `python run.py --models`.
 **`connect_over_cdp` refused**
 Chromium is not running, or not listening on `CDP_URL`. Start it with
 `./scripts/start_chromium.sh &` and confirm with `curl http://127.0.0.1:9222/json/version`.
+In Debian/proot you can skip CDP entirely: set `BROWSER_MODE=launch` and
+`CHROME_PATH=/usr/bin/chromium`.
+
+**Chromium exits immediately under proot**
+proot cannot always fork the zygote process. Add
+`BROWSER_ARGS=--single-process,--no-zygote` to `.env`.
+
+**`Temporary failure resolving` inside Debian**
+The proot guest started with an empty `/etc/resolv.conf`. Write
+`nameserver 8.8.8.8` into it (`scripts/setup_debian.sh` does this automatically).
+
+**`error: externally-managed-environment` from pip in Debian**
+Debian 12 blocks system-wide pip. Use the virtualenv:
+`python3 -m venv .venv && . .venv/bin/activate`.
 
 **Run dies when the screen locks**
 Android suspended Termux. Run `termux-wake-lock` before starting.

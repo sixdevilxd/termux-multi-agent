@@ -50,11 +50,21 @@ class BrowserDriver:
             pages = self.context.pages
             self.page = pages[0] if pages else await self.context.new_page()
         else:
-            log.info("Launching Chromium (headless=%s)", settings.headless)
-            self.browser = await self._pw.chromium.launch(
-                headless=settings.headless,
-                args=["--no-sandbox", "--disable-dev-shm-usage"],
-            )
+            launch_args = ["--no-sandbox", "--disable-dev-shm-usage", *settings.browser_args]
+            launch_kwargs: dict[str, Any] = {
+                "headless": settings.headless,
+                "args": launch_args,
+            }
+            if settings.chrome_path:
+                # Drive a system Chromium (Debian/proot, or any distro package)
+                # instead of a Playwright-managed download.
+                launch_kwargs["executable_path"] = settings.chrome_path
+                log.info("Launching system Chromium at %s", settings.chrome_path)
+            else:
+                log.info("Launching Playwright-managed Chromium")
+            log.info("headless=%s args=%s", settings.headless, " ".join(launch_args))
+
+            self.browser = await self._pw.chromium.launch(**launch_kwargs)
             self._owns_browser = True
             self.context = await self.browser.new_context(
                 user_agent=UA_ANDROID,

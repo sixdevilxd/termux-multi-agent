@@ -279,6 +279,55 @@ def test_tasks_sort_by_priority_then_confidence():
     assert [t.id for t in sorted(tasks, key=lambda t: t.rank())] == ["c", "b", "a"]
 
 
+# ── browser configuration ────────────────────────────────────────────────────
+def test_cdp_mode_needs_no_chromium_path():
+    from config.settings import Settings
+
+    s = Settings(browser_mode="cdp", chrome_path="", llm_api_key="k")
+    assert s.validate() == []
+
+
+def test_launch_mode_without_chrome_path_is_flagged():
+    from config.settings import Settings
+
+    s = Settings(browser_mode="launch", chrome_path="", llm_api_key="k")
+    assert any("CHROME_PATH" in p for p in s.validate())
+
+
+def test_missing_chromium_binary_is_caught_early(tmp_path):
+    from config.settings import Settings
+
+    s = Settings(
+        browser_mode="launch",
+        chrome_path=str(tmp_path / "nope" / "chromium"),
+        llm_api_key="k",
+    )
+    assert any("does not exist" in p for p in s.validate())
+
+
+def test_existing_chromium_binary_passes(tmp_path):
+    from config.settings import Settings
+
+    fake = tmp_path / "chromium"
+    fake.write_text("#!/bin/sh\n")
+    s = Settings(browser_mode="launch", chrome_path=str(fake), llm_api_key="k")
+    assert s.validate() == []
+
+
+def test_extra_browser_args_are_passed_through():
+    from config.settings import Settings
+
+    s = Settings(browser_args=("--single-process", "--no-zygote"), llm_api_key="k")
+    assert "--single-process" in s.browser_args
+
+
+def test_invalid_browser_mode_is_reported():
+    from config.settings import Settings
+
+    s = Settings(browser_mode="magic", llm_api_key="k")
+    assert any("BROWSER_MODE" in p for p in s.validate())
+
+
 # ── event bus ────────────────────────────────────────────────────────────────
 def test_bus_delivers_and_isolates_failures():
     bus = EventBus()

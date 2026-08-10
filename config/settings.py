@@ -67,6 +67,13 @@ class Settings:
     # browser
     browser_mode: str = os.getenv("BROWSER_MODE", "cdp").strip().lower()
     cdp_url: str = os.getenv("CDP_URL", "http://127.0.0.1:9222")
+    # Path to a system Chromium. Set this when BROWSER_MODE=launch so Playwright
+    # drives an already-installed browser instead of downloading its own —
+    # which it cannot do on Android, and need not do inside Debian/proot.
+    chrome_path: str = os.getenv("CHROME_PATH", "").strip()
+    # Extra Chromium flags, comma separated. proot sometimes needs
+    # --single-process,--no-zygote to start at all.
+    browser_args: tuple[str, ...] = field(default_factory=lambda: tuple(_csv("BROWSER_ARGS")))
     headless: bool = _bool("HEADLESS", True)
     nav_timeout_ms: int = _int("NAV_TIMEOUT_MS", 30_000)
 
@@ -138,6 +145,17 @@ class Settings:
             problems.append("LLM_API_KEY is empty — the reasoning agents cannot run.")
         if self.browser_mode not in {"cdp", "launch"}:
             problems.append(f"BROWSER_MODE must be 'cdp' or 'launch', got {self.browser_mode!r}.")
+        if self.chrome_path and not Path(self.chrome_path).exists():
+            problems.append(
+                f"CHROME_PATH points at {self.chrome_path!r}, which does not exist. "
+                "Run `which chromium` and use that path."
+            )
+        if self.browser_mode == "launch" and not self.chrome_path:
+            problems.append(
+                "BROWSER_MODE=launch without CHROME_PATH means Playwright must supply its "
+                "own browser. That works on desktop Linux (after `playwright install "
+                "chromium`) but not on Android — set CHROME_PATH to a system Chromium."
+            )
         if self.llm_provider not in DEFAULT_BASE_URLS:
             problems.append(
                 f"Unknown LLM_PROVIDER {self.llm_provider!r}. "
