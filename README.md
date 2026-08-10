@@ -1,7 +1,10 @@
 # termux-multi-agent
 
 A multi-agent web automation system that runs **entirely from your phone** —
-Termux for compute, Telegram for control, GitHub for the code.
+Termux for compute, Telegram for control **and chat**, GitHub for the code.
+
+Besides website runs, the bot is a **natural chatbox**: coding help, crypto market,
+new-token scans (free DexScreener + GMGN links), wallets, web search, DLMM explainers.
 
 You send a URL. A swarm of specialised agents opens the site, logs in (asking
 you for the OTP when it hits one), works out what the product actually is,
@@ -127,21 +130,39 @@ every prompt is redacted before egress. Full detail and the threat model are in
 
 ---
 
-## Telegram commands
+## Telegram: chatbox + commands
+
+### Natural chat (no slash needed)
+Just message the bot like a normal chatbox:
+
+| You say | What happens |
+| --- | --- |
+| *market crypto* / *harga sol* | Live majors + trending (CoinGecko) |
+| *scan token baru* | Hot/new tokens via free DexScreener + GMGN links |
+| *cek token <symbol\|mint>* | Pair lookup |
+| *sentimen market* | Quick tape read |
+| *buat wallet solana namanya main* | Create wallet (secret file local only) |
+| *list wallet* | Show saved addresses |
+| *cari berita ...* / *riset ...* | Free web search |
+| *jelasin DLMM* | LP / Meteora-style explainer |
+| code / bug questions | LLM coding help |
+| plain `https://site.com` | Starts a website run (same as /run) |
+
+### Slash commands
 
 | Command | Effect |
 | --- | --- |
-| `/run <url>` | Start a run |
+| `/run <url>` | Start a website automation run |
 | `/status` | Current phase, page/task counts, open gate |
 | `/reply <token> <answer>` | Answer a human gate (OTP, password, ...) |
 | `/skip <token>` | Refuse a gate, let the run continue |
 | `/stop` | Cancel the current run |
 | `/report` | Resend the last summary |
+| `/help` | This guide |
 
-A plain text message answers the oldest open gate — faster than typing tokens
-on a phone. Messages containing secrets are deleted after they are consumed.
+When a human gate is open (OTP/login), a plain text message answers that gate first.
+Messages containing secrets are deleted after they are accepted when possible.
 
----
 
 ## Project layout
 
@@ -159,7 +180,8 @@ browser/session.py     per-domain cookie persistence
 agents/                base · browser · login · site_understanding
                        · discovery · task_miner · planner · verifier
                        · reporter · orchestrator
-tgbot/bot.py           Telegram commands
+tgbot/bot.py           Telegram commands + chatbox wiring
+chatbox/               Natural chat brain (crypto, web, wallet, LLM)
 tgbot/human_gate.py    OTP/CAPTCHA suspension
 scripts/               setup_debian.sh · start_chromium.sh
 tests/                 offline suite — no browser, network or API key needed
@@ -185,6 +207,9 @@ Start with `DRY_RUN=true` on a new site. Read the report. Then turn it off.
 
 Sessions in `storage/sessions/` contain live auth cookies. They are gitignored
 and written `0600`. Do not commit them.
+
+Wallet secrets live in `storage/wallets/` (also gitignored, mode `0600`).
+The bot never prints private keys in chat.
 
 ---
 
