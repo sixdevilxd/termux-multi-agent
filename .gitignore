@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# runtime artifacts — never commit sessions, they contain auth cookies
+storage/sessions/
+storage/runs/
+storage/reports/
+storage/screenshots/
+*.log

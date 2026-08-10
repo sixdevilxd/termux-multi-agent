@@ -1,0 +1,12 @@
+# Core runtime — all pure-python or wheels available on Termux/aarch64
+python-telegram-bot>=21.4,<22
+httpx>=0.27,<0.29
+python-dotenv>=1.0
+rich>=13.7
+
+# Browser layer.
+# NOTE: on Termux, `pip install playwright` may need to build `greenlet`.
+#   pkg install build-essential python-dev binutils
+# Playwright CANNOT download its own Chromium on Android. Use CDP mode:
+#   pkg install chromium   (from tur-repo)  -> BROWSER_MODE=cdp
+playwright>=1.45,<2
