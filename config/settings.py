@@ -31,13 +31,21 @@ DEFAULT_BASE_URLS = {
     "openrouter": "https://openrouter.ai/api/v1",
     "anthropic": "https://api.anthropic.com/v1",
     "gemini": "https://generativelanguage.googleapis.com/v1beta",
-    # OpenAI-compatible gateway. The trailing /v1 is required.
-    # China mainland fallback: https://ps.air-outer.com/v1
-    "agentrouter": "https://agentrouter.org/v1",
+    # Write the host on its own — the client appends the right API path.
+    # China mainland fallback: ps.air-outer.com
+    "agentrouter": "agentrouter.org",
 }
 
 # Providers that speak the OpenAI /chat/completions wire format.
 OPENAI_COMPATIBLE = {"openai", "openrouter", "agentrouter"}
+
+
+def normalise_base_url(url: str) -> str:
+    """Accept `agentrouter.org`, `https://agentrouter.org/`, `.../v1` alike."""
+    url = (url or "").strip().rstrip("/")
+    if url and not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    return url
 
 
 @dataclass(frozen=True)
@@ -75,13 +83,28 @@ class Settings:
 
     @property
     def resolved_base_url(self) -> str:
-        return self.llm_base_url or DEFAULT_BASE_URLS.get(
-            self.llm_provider, DEFAULT_BASE_URLS["agentrouter"]
+        """The host the client talks to, without any API path appended."""
+        return normalise_base_url(
+            self.llm_base_url
+            or DEFAULT_BASE_URLS.get(self.llm_provider, DEFAULT_BASE_URLS["agentrouter"])
         )
 
     @property
     def is_openai_compatible(self) -> bool:
         return self.llm_provider in OPENAI_COMPATIBLE
+
+    @property
+    def api_root(self) -> str:
+        """Base URL plus the version segment the provider's API lives under.
+
+        Gemini pins its own version. Everything else is versioned `/v1`, which
+        we add only when the configured URL does not already carry it — so
+        `agentrouter.org` and `https://agentrouter.org/v1` both work.
+        """
+        base = self.resolved_base_url
+        if self.llm_provider == "gemini":
+            return base
+        return base if base.endswith("/v1") else base + "/v1"
 
     @property
     def sessions_dir(self) -> Path:
@@ -119,11 +142,6 @@ class Settings:
             problems.append(
                 f"Unknown LLM_PROVIDER {self.llm_provider!r}. "
                 f"Expected one of: {', '.join(sorted(DEFAULT_BASE_URLS))}."
-            )
-        if self.is_openai_compatible and not self.resolved_base_url.rstrip("/").endswith("/v1"):
-            problems.append(
-                f"{self.llm_provider} needs a base URL ending in /v1 — got "
-                f"{self.resolved_base_url!r}. Fix LLM_BASE_URL."
             )
         return problems
 

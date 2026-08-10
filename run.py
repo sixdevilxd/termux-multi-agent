@@ -22,6 +22,7 @@ def check_config() -> int:
     problems = settings.validate()
     console.print(f"provider   : {settings.llm_provider} / {settings.llm_model}")
     console.print(f"base url   : {settings.resolved_base_url}")
+    console.print(f"api root   : {settings.api_root}  [dim](path is derived)[/dim]")
     console.print(f"api key    : {'set' if settings.llm_api_key else 'MISSING'}")
     console.print(f"browser    : {settings.browser_mode} ({settings.cdp_url})")
     console.print(f"dry run    : {settings.dry_run}")
@@ -55,7 +56,7 @@ async def list_models(filter_text: str = "") -> int:
     if filter_text:
         models = [m for m in models if filter_text.lower() in m.lower()]
 
-    console.print(f"[bold]{len(models)} model(s)[/bold] on {settings.resolved_base_url}\n")
+    console.print(f"[bold]{len(models)} model(s)[/bold] on {settings.api_root}\n")
     for model in models:
         marker = " [green]<- LLM_MODEL[/green]" if model == settings.llm_model else ""
         console.print(f"  {model}{marker}")
@@ -73,7 +74,7 @@ async def ping() -> int:
     from core.llm import LLMClient
 
     client = LLMClient()
-    console.print(f"Calling {settings.llm_model} at {settings.resolved_base_url} ...")
+    console.print(f"Calling {settings.llm_model} at {settings.api_root} ...")
     try:
         reply = await client.ping()
     except Exception as exc:

@@ -102,30 +102,58 @@ def test_extract_json_survives_chatty_models(raw):
 
 
 # ── provider configuration ───────────────────────────────────────────────────
-def test_agentrouter_defaults_to_v1_base_url():
+def test_agentrouter_default_host():
     from config.settings import Settings
 
     s = Settings(llm_provider="agentrouter", llm_base_url="", llm_api_key="k")
-    assert s.resolved_base_url == "https://agentrouter.org/v1"
+    assert s.resolved_base_url == "https://agentrouter.org"
+    assert s.api_root == "https://agentrouter.org/v1"
     assert s.is_openai_compatible
     assert s.validate() == []
 
 
-def test_openai_compatible_base_url_must_end_with_v1():
+@pytest.mark.parametrize(
+    "written",
+    [
+        "agentrouter.org",
+        "agentrouter.org/",
+        "https://agentrouter.org",
+        "https://agentrouter.org/",
+        "https://agentrouter.org/v1",
+        "  agentrouter.org  ",
+    ],
+)
+def test_every_way_of_writing_the_host_resolves_the_same(written):
+    """The user should be able to type just the domain and be right."""
     from config.settings import Settings
 
-    s = Settings(
-        llm_provider="agentrouter",
-        llm_base_url="https://agentrouter.org",
-        llm_api_key="k",
-    )
-    assert any("/v1" in p for p in s.validate())
+    s = Settings(llm_provider="agentrouter", llm_base_url=written, llm_api_key="k")
+    assert s.api_root == "https://agentrouter.org/v1"
+    assert s.validate() == []
 
 
-def test_anthropic_is_not_openai_compatible():
+def test_v1_is_never_doubled():
     from config.settings import Settings
 
-    s = Settings(llm_provider="anthropic", llm_base_url="", llm_api_key="k")
+    s = Settings(llm_provider="openrouter", llm_base_url="", llm_api_key="k")
+    assert s.api_root == "https://openrouter.ai/api/v1"
+    assert s.api_root.count("/v1") == 1
+
+
+def test_gemini_keeps_its_own_version_segment():
+    from config.settings import Settings
+
+    s = Settings(llm_provider="gemini", llm_base_url="", llm_api_key="k")
+    assert s.api_root.endswith("/v1beta")
+    assert not s.is_openai_compatible
+
+
+def test_anthropic_wire_can_also_point_at_agentrouter():
+    """agentrouter exposes an Anthropic-compatible API on the same host."""
+    from config.settings import Settings
+
+    s = Settings(llm_provider="anthropic", llm_base_url="agentrouter.org", llm_api_key="k")
+    assert s.api_root == "https://agentrouter.org/v1"  # -> /v1/messages
     assert not s.is_openai_compatible
     assert s.validate() == []
 

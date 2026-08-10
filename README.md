@@ -68,6 +68,7 @@ TELEGRAM_BOT_TOKEN=...        # from @BotFather
 TELEGRAM_ALLOWED_USERS=...    # your numeric id, from @userinfobot
 
 LLM_PROVIDER=agentrouter
+LLM_BASE_URL=agentrouter.org  # just the host — the API path is derived
 LLM_MODEL=claude-opus-5
 LLM_API_KEY=sk-...            # from https://agentrouter.org/console
 ```
@@ -141,7 +142,7 @@ Every knob lives in `.env` (see `.env.example`).
 | --- | --- | --- |
 | `LLM_PROVIDER` | `agentrouter` | `agentrouter` · `openai` · `anthropic` · `gemini` · `openrouter` |
 | `LLM_MODEL` | `claude-opus-5` | Exact gateway model id — check with `--models` |
-| `LLM_BASE_URL` | *(provider default)* | Override; OpenAI-compatible gateways need a trailing `/v1` |
+| `LLM_BASE_URL` | *(provider default)* | Host only — scheme and API path are added for you |
 | `BROWSER_MODE` | `cdp` | `cdp` attaches to a running Chromium; `launch` lets Playwright start one |
 | `CDP_URL` | `http://127.0.0.1:9222` | Where the browser is listening |
 | `DRY_RUN` | `false` | Plan everything, click nothing |
@@ -151,18 +152,30 @@ Every knob lives in `.env` (see `.env.example`).
 
 ### Providers
 
-| Provider | Base URL | Wire format |
-| --- | --- | --- |
-| `agentrouter` | `https://agentrouter.org/v1` | OpenAI |
-| `openai` | `https://api.openai.com/v1` | OpenAI |
-| `openrouter` | `https://openrouter.ai/api/v1` | OpenAI |
-| `anthropic` | `https://api.anthropic.com/v1` | Anthropic messages |
-| `gemini` | `https://generativelanguage.googleapis.com/v1beta` | Gemini |
+| Provider | Host | Request path | Wire format |
+| --- | --- | --- | --- |
+| `agentrouter` | `agentrouter.org` | `/v1/chat/completions` | OpenAI |
+| `openai` | `api.openai.com` | `/v1/chat/completions` | OpenAI |
+| `openrouter` | `openrouter.ai/api` | `/v1/chat/completions` | OpenAI |
+| `anthropic` | `api.anthropic.com` | `/v1/messages` | Anthropic |
+| `gemini` | `generativelanguage.googleapis.com` | `/v1beta/models/...` | Gemini |
 
-AgentRouter is an OpenAI-compatible gateway, so `claude-opus-5` is reached through
-`/v1/chat/completions` rather than Anthropic's native endpoint — keep
-`LLM_PROVIDER=agentrouter`, not `anthropic`. Users in mainland China can point
-`LLM_BASE_URL` at the mirror `https://ps.air-outer.com/v1`.
+**You only ever configure the host.** `LLM_BASE_URL=agentrouter.org`,
+`https://agentrouter.org` and `https://agentrouter.org/v1` all resolve to the
+same API root — the scheme is added if missing and `/v1` is appended only when
+it is not already there, so it can never be doubled.
+
+AgentRouter serves both wire formats from that one host:
+
+```ini
+LLM_PROVIDER=agentrouter   # -> POST agentrouter.org/v1/chat/completions
+LLM_PROVIDER=anthropic     # -> POST agentrouter.org/v1/messages
+LLM_BASE_URL=agentrouter.org
+```
+
+Either reaches `claude-opus-5`. Start with `agentrouter`; switch to
+`anthropic` only if you specifically want the native Claude message format.
+Mainland China mirror: `LLM_BASE_URL=ps.air-outer.com`.
 
 Model ids differ between gateways (`claude-opus-5` here vs
 `anthropic/claude-opus-5` on OpenRouter). `python run.py --models` prints the
@@ -201,7 +214,9 @@ switch `LLM_BASE_URL` to the mirror `https://ps.air-outer.com/v1`.
 Bad or expired `LLM_API_KEY`. Regenerate it at the provider console.
 
 **`HTTP 404` on `/chat/completions`**
-`LLM_BASE_URL` is missing the trailing `/v1`.
+The gateway does not serve the OpenAI wire format at that host. Check
+`python run.py --check` — it prints the exact `api root` being called — or try
+`LLM_PROVIDER=anthropic` against the same host.
 
 **`LLM_MODEL ... is not in this list`**
 Model ids are gateway-specific. Copy an exact id from `python run.py --models`.

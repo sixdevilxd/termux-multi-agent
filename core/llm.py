@@ -55,7 +55,9 @@ class LLMClient:
     def __init__(self, timeout: float = 120.0) -> None:
         self.provider = settings.llm_provider
         self.model = settings.llm_model
-        self.base_url = settings.resolved_base_url.rstrip("/")
+        # Host + version segment, derived from LLM_BASE_URL. Writing just
+        # `agentrouter.org` in .env is enough; the /v1 is added here.
+        self.api_root = settings.api_root
         self.api_key = settings.llm_api_key
         self._client = httpx.AsyncClient(timeout=timeout)
 
@@ -84,7 +86,7 @@ class LLMClient:
         if not self.api_key:
             raise LLMError("LLM_API_KEY is not set.")
         if self.provider == "gemini":
-            r = await self._client.get(f"{self.base_url}/models", params={"key": self.api_key})
+            r = await self._client.get(f"{self.api_root}/models", params={"key": self.api_key})
             self._raise_for_status(r)
             return sorted(
                 m.get("name", "").removeprefix("models/") for m in self._json_body(r).get("models", [])
@@ -95,7 +97,7 @@ class LLMClient:
             if self.provider == "anthropic"
             else {"Authorization": f"Bearer {self.api_key}"}
         )
-        r = await self._client.get(f"{self.base_url}/models", headers=headers)
+        r = await self._client.get(f"{self.api_root}/models", headers=headers)
         self._raise_for_status(r)
         payload = self._json_body(r)
         rows = payload.get("data", payload if isinstance(payload, list) else [])
@@ -110,7 +112,7 @@ class LLMClient:
     # ── providers ────────────────────────────────────────────────────────────
     async def _openai_compatible(self, system: str, user: str, temperature: float) -> str:
         r = await self._client.post(
-            f"{self.base_url}/chat/completions",
+            f"{self.api_root}/chat/completions",
             headers={"Authorization": f"Bearer {self.api_key}"},
             json={
                 "model": self.model,
@@ -126,7 +128,7 @@ class LLMClient:
 
     async def _anthropic(self, system: str, user: str, temperature: float) -> str:
         r = await self._client.post(
-            f"{self.base_url}/messages",
+            f"{self.api_root}/messages",
             headers={
                 "x-api-key": self.api_key,
                 "anthropic-version": "2023-06-01",
@@ -144,7 +146,7 @@ class LLMClient:
 
     async def _gemini(self, system: str, user: str, temperature: float) -> str:
         r = await self._client.post(
-            f"{self.base_url}/models/{self.model}:generateContent",
+            f"{self.api_root}/models/{self.model}:generateContent",
             params={"key": self.api_key},
             json={
                 "systemInstruction": {"parts": [{"text": system}]},
@@ -165,7 +167,10 @@ class LLMClient:
             if r.status_code in (401, 403):
                 hint = " — check LLM_API_KEY."
             elif r.status_code == 404:
-                hint = " — check LLM_BASE_URL (OpenAI-compatible gateways need a trailing /v1)."
+                hint = (
+                    " — this host does not serve that API path. Check LLM_BASE_URL, "
+                    "or try a different LLM_PROVIDER wire format against the same host."
+                )
             raise LLMError(f"HTTP {r.status_code} from {r.request.url}{hint}\n{r.text[:400]}")
 
     @staticmethod
@@ -184,8 +189,8 @@ class LLMClient:
                 )
             elif "<!doctype html" in lowered or "<html" in lowered:
                 cause = (
-                    "The gateway returned a web page, not the API. Check LLM_BASE_URL — "
-                    "OpenAI-compatible gateways must end in /v1."
+                    "The gateway returned a web page, not the API. LLM_BASE_URL is "
+                    "probably pointing at the website rather than the API host."
                 )
             else:
                 cause = "The gateway returned a non-JSON body."
