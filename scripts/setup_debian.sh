@@ -28,7 +28,23 @@ apt-get install -y --no-install-recommends \
   chromium fonts-liberation
 
 echo "==> Creating virtualenv (Debian 12 blocks system-wide pip installs)"
-python3 -m venv .venv
+if ! python3 -m venv .venv 2>/tmp/venv-error.log; then
+  echo "    First attempt failed:"
+  sed 's/^/      /' /tmp/venv-error.log
+  echo "    Installing python3-venv / python3-full and retrying..."
+  apt-get install -y python3-venv python3-full
+  python3 -m venv .venv
+fi
+
+# Fail loudly here rather than leaving the user with a missing activate script.
+if [ ! -f .venv/bin/activate ]; then
+  echo "!! .venv/bin/activate was not created." >&2
+  echo "   Fix: apt-get install -y python3-venv python3-full" >&2
+  echo "   Then re-run: bash scripts/setup_debian.sh" >&2
+  exit 1
+fi
+echo "    venv ready: $(pwd)/.venv"
+
 # shellcheck disable=SC1091
 . .venv/bin/activate
 pip install --upgrade pip wheel
