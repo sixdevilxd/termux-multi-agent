@@ -16,3 +16,6 @@ storage/runs/
 storage/reports/
 storage/screenshots/
 *.log
+
+# wallet secrets — never commit
+storage/wallets/
