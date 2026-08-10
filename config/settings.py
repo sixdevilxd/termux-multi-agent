@@ -86,6 +86,9 @@ class Settings:
     login_email: str = os.getenv("LOGIN_EMAIL", "").strip()
     login_password: str = os.getenv("LOGIN_PASSWORD", "")
     login_domain: str = os.getenv("LOGIN_DOMAIN", "")
+    # Points only accrue on a logged-in account, so an anonymous run is wasted
+    # effort. Abort rather than pretend it was useful.
+    require_login: bool = _bool("REQUIRE_LOGIN", True)
 
     # browser
     browser_mode: str = os.getenv("BROWSER_MODE", "cdp").strip().lower()

@@ -36,6 +36,9 @@ def check_config() -> int:
     if settings.browser_args:
         console.print(f"extra args : {' '.join(settings.browser_args)}")
     console.print(f"dry run    : {settings.dry_run}")
+    console.print(
+        f"login      : {'REQUIRED — run aborts if not authenticated' if settings.require_login else 'optional (anonymous runs allowed)'}"
+    )
     if settings.has_stored_credentials:
         bound = settings.login_host or "ANY SITE (unbound)"
         console.print(f"login creds: stored, bound to {bound}")

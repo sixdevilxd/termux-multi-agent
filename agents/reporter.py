@@ -137,6 +137,18 @@ class Reporter(Agent):
         head = [
             f"*Run {state.run_id} finished*",
             f"Target: `{state.target_url}`",
+        ]
+        if not state.logged_in and settings.require_login:
+            head += [
+                "",
+                "*STOPPED — not authenticated.*",
+                "Rewards only accrue on a logged-in account, so nothing was attempted.",
+            ]
+            for note in state.notes[:3]:
+                head.append(f"_{note}_")
+            return "\n".join(head)
+
+        head += [
             f"Login: {'yes' if state.logged_in else 'no'} · Pages: {len(state.pages)} · "
             f"Actions: {state.actions_used}",
             f"Tasks: {verified}/{len(state.tasks)} verified",

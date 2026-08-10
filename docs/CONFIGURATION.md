@@ -68,6 +68,12 @@ LOGIN_EMAIL=
 LOGIN_PASSWORD=
 LOGIN_DOMAIN=
 
+# Abort the run if authentication cannot be confirmed. Rewards only accrue on
+# a logged-in account, so an anonymous run burns the action budget and the
+# model quota for nothing. Set to false only if you deliberately want to
+# survey a site without signing in.
+REQUIRE_LOGIN=true
+
 # ─── Safety ────────────────────────────────────────────────────────────────
 # true = reason about everything, click nothing. Use this on a new site first.
 DRY_RUN=false
@@ -111,6 +117,7 @@ LOG_LEVEL=INFO
 | `LOGIN_EMAIL` | *(empty)* | Stored site login; blank means ask on Telegram |
 | `LOGIN_PASSWORD` | *(empty)* | Stored site password |
 | `LOGIN_DOMAIN` | *(empty)* | Host the credentials may be used on — **set this** |
+| `REQUIRE_LOGIN` | `true` | Abort the run if authentication is not confirmed |
 | `BROWSER_MODE` | `cdp` | `launch` starts a browser; `cdp` attaches to one |
 | `CHROME_PATH` | *(empty)* | System Chromium binary for `launch` mode |
 | `BROWSER_ARGS` | *(empty)* | Extra Chromium flags, comma separated |
@@ -243,6 +250,21 @@ Your `.env` still holds a plaintext password, so restrict it:
 ```bash
 chmod 600 .env
 ```
+
+### Anonymous runs are refused by default
+
+`REQUIRE_LOGIN=true` (the default) stops the run the moment authentication
+cannot be confirmed, before discovery spends any budget:
+
+```
+x orchestrator Not authenticated — stopping. Rewards only accrue on a
+               logged-in account, so an anonymous run would be wasted.
+```
+
+The report then names the cause: no credentials available, credentials that
+did not work, or a login flow that could not be detected at all. Set
+`REQUIRE_LOGIN=false` only when you deliberately want to survey a site while
+signed out.
 
 ---
 

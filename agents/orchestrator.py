@@ -35,6 +35,24 @@ MAX_ATTEMPTS_PER_TASK = 2
 MAX_PLAN_ROUNDS = 8
 
 
+def login_failure_hint(has_credentials: bool, method: str) -> str:
+    """Explain, in one line, why the run stopped and what to change."""
+    if method == "unknown":
+        return (
+            "no login flow could be found on this site — if it uses a wallet, an SSO "
+            "popup or an in-app dialog, that is not supported yet"
+        )
+    if not has_credentials:
+        return (
+            "login required but no credentials were available — set LOGIN_EMAIL, "
+            "LOGIN_PASSWORD and LOGIN_DOMAIN in .env, or answer the Telegram prompt"
+        )
+    return (
+        "login required but authentication could not be confirmed — check the stored "
+        "credentials, or set REQUIRE_LOGIN=false to allow anonymous runs"
+    )
+
+
 class Orchestrator:
     def __init__(
         self,
@@ -105,6 +123,21 @@ class Orchestrator:
             # onboarding dialogs commonly appear immediately after signing in
             await overlay.run()
             state.save()
+
+            # An anonymous run cannot earn anything, so stop rather than burn
+            # the action budget and the model quota producing a useless report.
+            if settings.require_login and not state.logged_in:
+                await self._announce(
+                    "error",
+                    "Not authenticated — stopping. Rewards only accrue on a "
+                    "logged-in account, so an anonymous run would be wasted.",
+                )
+                return await self._finish(
+                    state,
+                    login_failure_hint(bool(self.credentials), state.login_method or "unknown"),
+                )
+            if not state.logged_in:
+                state.notes.append("running anonymously — REQUIRE_LOGIN is off")
             if self._cancelled:
                 return await self._finish(state, "cancelled during login")
 

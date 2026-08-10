@@ -496,6 +496,52 @@ def test_half_configured_credentials_are_ignored():
     assert s.credentials_for("https://app.example.com/") == {}
 
 
+# ── login is mandatory ───────────────────────────────────────────────────────
+def test_login_is_required_by_default():
+    from config.settings import Settings
+
+    assert Settings(llm_api_key="k").require_login is True
+
+
+def test_login_requirement_can_be_disabled():
+    from config.settings import Settings
+
+    assert Settings(llm_api_key="k", require_login=False).require_login is False
+
+
+def test_hint_points_at_missing_credentials():
+    from agents.orchestrator import login_failure_hint
+
+    hint = login_failure_hint(has_credentials=False, method="form")
+    assert "LOGIN_EMAIL" in hint
+
+
+def test_hint_points_at_wrong_credentials():
+    from agents.orchestrator import login_failure_hint
+
+    hint = login_failure_hint(has_credentials=True, method="form")
+    assert "could not be confirmed" in hint
+    assert "REQUIRE_LOGIN=false" in hint
+
+
+def test_hint_explains_an_undetectable_login():
+    from agents.orchestrator import login_failure_hint
+
+    hint = login_failure_hint(has_credentials=True, method="unknown")
+    assert "no login flow" in hint
+
+
+def test_summary_shouts_when_the_run_stopped_unauthenticated():
+    from agents.reporter import Reporter
+
+    state = RunState(target_url="https://app.example.com")
+    state.logged_in = False
+    state.notes.append("login required but no credentials were available")
+    summary = Reporter.telegram_summary(state)
+    assert "STOPPED" in summary
+    assert "not authenticated" in summary.lower()
+
+
 # ── event bus ────────────────────────────────────────────────────────────────
 def test_bus_delivers_and_isolates_failures():
     bus = EventBus()

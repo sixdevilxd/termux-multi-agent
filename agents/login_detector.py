@@ -192,7 +192,7 @@ class LoginDetector(Agent):
             self.state.login_method = f"oneclick:{plan.provider_name}"
 
         else:
-            await self.warn("No login flow found — continuing as anonymous visitor.")
+            await self.warn("No login flow found on this site.")
             return False
 
         return await self._resolve_challenges()
