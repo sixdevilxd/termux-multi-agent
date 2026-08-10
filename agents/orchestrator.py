@@ -37,19 +37,33 @@ MAX_PLAN_ROUNDS = 8
 
 def login_failure_hint(has_credentials: bool, method: str) -> str:
     """Explain, in one line, why the run stopped and what to change."""
+    method = (method or "unknown").lower()
+    if method.startswith("manual") or method.startswith("oneclick"):
+        return (
+            "SSO/manual login did not finish — set HEADLESS=false, complete Google/"
+            "Microsoft/wallet login in the browser when prompted, reply 'done', and "
+            "keep the saved session under storage/sessions/"
+        )
     if method == "unknown":
         return (
-            "no login flow could be found on this site — if it uses a wallet, an SSO "
-            "popup or an in-app dialog, that is not supported yet"
+            "no login flow could be confirmed — when Telegram asks, finish login in "
+            "the browser (including Google SSO popups) and reply 'done'"
         )
-    if not has_credentials:
+    if not has_credentials and method == "form":
         return (
             "login required but no credentials were available — set LOGIN_EMAIL, "
             "LOGIN_PASSWORD and LOGIN_DOMAIN in .env, or answer the Telegram prompt"
         )
+    if not has_credentials:
+        return (
+            "login required but authentication could not be confirmed — complete the "
+            "Telegram manual-login prompt, or set LOGIN_EMAIL/LOGIN_PASSWORD/"
+            "LOGIN_DOMAIN for native site forms"
+        )
     return (
         "login required but authentication could not be confirmed — check the stored "
-        "credentials, or set REQUIRE_LOGIN=false to allow anonymous runs"
+        "credentials, complete any SSO prompt manually, or set REQUIRE_LOGIN=false "
+        "to allow anonymous runs"
     )
 
 

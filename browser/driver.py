@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from config.settings import settings
 from core.logger import get_logger
@@ -32,6 +33,44 @@ class BrowserDriver:
         self.context: Any = None
         self.page: Any = None
         self._owns_browser = False
+
+    def set_page(self, page: Any) -> None:
+        """Switch the active page (used when an OAuth popup opens)."""
+        self.page = page
+
+    async def focus_latest_page(self) -> None:
+        if not self.context:
+            return
+        pages = [p for p in self.context.pages if not p.is_closed()]
+        if pages:
+            self.page = pages[-1]
+            try:
+                await self.page.bring_to_front()
+            except Exception:
+                pass
+
+    async def focus_page_for_host(self, host: str) -> None:
+        """Prefer a non-closed page whose URL matches host; else latest page."""
+        if not self.context:
+            return
+        host = (host or "").lower().removeprefix("www.")
+        pages = [p for p in self.context.pages if not p.is_closed()]
+        if not pages:
+            return
+        chosen = None
+        for page in reversed(pages):
+            try:
+                page_host = urlparse(page.url).netloc.lower().removeprefix("www.")
+            except Exception:
+                continue
+            if not host or page_host == host or page_host.endswith("." + host):
+                chosen = page
+                break
+        self.page = chosen or pages[-1]
+        try:
+            await self.page.bring_to_front()
+        except Exception:
+            pass
 
     async def start(self) -> None:
         from playwright.async_api import async_playwright
@@ -88,6 +127,9 @@ class BrowserDriver:
         if not self.context:
             return
         try:
+            # Prefer a page on the target host so storage_state captures the right jar.
+            target_host = urlparse(self.target_url).netloc.lower().removeprefix("www.")
+            await self.focus_page_for_host(target_host)
             save_storage_state(self.target_url, await self.context.storage_state())
         except Exception as exc:
             log.warning("Could not save session: %s", exc)

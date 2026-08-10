@@ -1,7 +1,7 @@
 """Guardrails — the layer that stops an autonomous agent from doing damage.
 
 Three independent checks, all applied before *every* browser action:
-  1. domain lock   — never leave the target origin
+  1. domain lock   — never leave the target origin (except allow-listed IdPs during login)
   2. intent filter — never touch destructive / financial controls
   3. budget        — hard cap on total actions per run
 """
@@ -32,6 +32,30 @@ SOCIAL_PATTERNS = [
     r"\bsend message\b", r"\bkirim\b",
 ]
 
+# Identity-provider hosts the agent may touch *only* while login OAuth corridor is open.
+# Keep this tight — it is a deliberate hole in the domain lock.
+DEFAULT_OAUTH_HOSTS = (
+    "accounts.google.com",
+    "myaccount.google.com",
+    "google.com",
+    "googleapis.com",
+    "gstatic.com",
+    "login.microsoftonline.com",
+    "login.live.com",
+    "microsoftonline.com",
+    "live.com",
+    "appleid.apple.com",
+    "apple.com",
+    "github.com",
+    "discord.com",
+    "discordapp.com",
+    "facebook.com",
+    "fb.com",
+    "twitter.com",
+    "x.com",
+    "api.twitter.com",
+)
+
 _COMPILED = {
     "destructive": [re.compile(p, re.I) for p in DESTRUCTIVE_PATTERNS],
     "financial": [re.compile(p, re.I) for p in FINANCIAL_PATTERNS],
@@ -60,13 +84,32 @@ class Guardrails:
         self.block_social = block_social
         self.actions_used = 0
         self.blocked: list[str] = []
+        self._oauth_open = False
+        self._oauth_hosts = {h.lower().removeprefix("www.") for h in DEFAULT_OAUTH_HOSTS}
+
+    def allow_oauth_hosts(self, enabled: bool = True) -> None:
+        """Open/close the login-time corridor to known identity providers."""
+        self._oauth_open = bool(enabled)
+
+    def _host_allowed(self, host: str) -> bool:
+        host = (host or "").lower().removeprefix("www.")
+        if not host:
+            return True
+        if host == self.origin or host.endswith("." + self.origin):
+            return True
+        if not self._oauth_open:
+            return False
+        for allowed in self._oauth_hosts:
+            if host == allowed or host.endswith("." + allowed):
+                return True
+        return False
 
     # ── individual checks ────────────────────────────────────────────────────
     def check_url(self, url: str) -> Verdict:
         host = urlparse(url).netloc.lower().removeprefix("www.")
         if not host:
             return ALLOW  # relative navigation stays on-origin
-        if host == self.origin or host.endswith("." + self.origin):
+        if self._host_allowed(host):
             return ALLOW
         return Verdict(False, f"off-origin navigation to {host}", "domain")
 

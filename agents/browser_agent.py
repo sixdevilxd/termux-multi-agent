@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 from agents.base import Agent
 from browser.dom import Snapshot, selector_for, snapshot as take_snapshot
@@ -69,6 +70,19 @@ class BrowserAgent(Agent):
     async def current(self) -> Snapshot:
         return self._snapshot or await self.refresh()
 
+    def _target_host(self) -> str:
+        return urlparse(self.state.target_url).netloc.lower().removeprefix("www.")
+
+    async def focus_latest_page(self) -> None:
+        """Point the driver at the most recently opened page (OAuth popups)."""
+        await self.driver.focus_latest_page()
+        self._snapshot = None
+
+    async def focus_target_page(self) -> None:
+        """Prefer a page whose URL is back on the run's target origin."""
+        await self.driver.focus_page_for_host(self._target_host())
+        self._snapshot = None
+
     # ── action dispatch ──────────────────────────────────────────────────────
     async def execute(self, action: dict[str, Any]) -> ActionResult:
         kind = str(action.get("action", "")).lower().strip()
@@ -86,8 +100,9 @@ class BrowserAgent(Agent):
             await self.step(f"[dry-run] would {kind} {label or action.get('url', '')}")
             return ActionResult(True, kind, "dry-run, not executed", url_before=url_before)
 
+        extra: dict[str, Any] = {}
         try:
-            detail = await self._perform(kind, action)
+            detail = await self._perform(kind, action, extra)
         except PermissionError as exc:
             await self.warn(f"Refused {kind}: {exc}")
             return ActionResult(False, kind, str(exc)[:200], blocked=True, url_before=url_before)
@@ -101,9 +116,11 @@ class BrowserAgent(Agent):
         url_after = self.page.url
         await self.refresh()
         await self.step(f"{kind} — {detail}")
-        return ActionResult(True, kind, detail, url_before=url_before, url_after=url_after)
+        return ActionResult(
+            True, kind, detail, url_before=url_before, url_after=url_after, data=extra
+        )
 
-    async def _perform(self, kind: str, action: dict[str, Any]) -> str:
+    async def _perform(self, kind: str, action: dict[str, Any], extra: dict[str, Any]) -> str:
         if kind == "goto":
             url = str(action["url"])
             await self.page.goto(url, wait_until="domcontentloaded")
@@ -133,6 +150,23 @@ class BrowserAgent(Agent):
         await locator.scroll_into_view_if_needed(timeout=5000)
 
         if kind == "click":
+            expect_popup = bool(action.get("expect_popup"))
+            if expect_popup and self.driver.context is not None:
+                try:
+                    async with self.driver.context.expect_page(timeout=8_000) as page_info:
+                        await locator.click(timeout=10_000)
+                    popup = await page_info.value
+                    try:
+                        await popup.wait_for_load_state("domcontentloaded", timeout=10_000)
+                    except Exception:
+                        pass
+                    self.driver.set_page(popup)
+                    self._snapshot = None
+                    extra["popup_url"] = popup.url
+                    return f"element #{action['index']} (popup {popup.url[:80]})"
+                except Exception:
+                    # Popup may be same-tab redirect, or blocked — fall through.
+                    pass
             await locator.click(timeout=10_000)
             return f"element #{action['index']}"
 
