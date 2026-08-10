@@ -15,6 +15,7 @@ from browser.driver import BrowserDriver
 from core.bus import EventBus
 from core.guardrails import Guardrails
 from core.llm import LLMClient
+from core.secrets import SecretVault
 from core.state import RunState
 
 VALID_ACTIONS = {"goto", "click", "fill", "press", "select", "scroll", "wait", "screenshot"}
@@ -46,11 +47,15 @@ class BrowserAgent(Agent):
         guardrails: Guardrails,
         llm: LLMClient | None = None,
         dry_run: bool = False,
+        vault: SecretVault | None = None,
     ) -> None:
         super().__init__(bus, state, llm)
         self.driver = driver
         self.guardrails = guardrails
         self.dry_run = dry_run
+        # The browser layer is the ONLY place a credential is turned back into
+        # plaintext, and only in the instruction immediately before typing it.
+        self.vault = vault
         self._snapshot: Snapshot | None = None
 
     @property
@@ -83,6 +88,9 @@ class BrowserAgent(Agent):
 
         try:
             detail = await self._perform(kind, action)
+        except PermissionError as exc:
+            await self.warn(f"Refused {kind}: {exc}")
+            return ActionResult(False, kind, str(exc)[:200], blocked=True, url_before=url_before)
         except Exception as exc:
             await self.warn(f"{kind} failed: {exc}")
             return ActionResult(False, kind, str(exc)[:200], url_before=url_before)
@@ -129,10 +137,22 @@ class BrowserAgent(Agent):
             return f"element #{action['index']}"
 
         if kind == "fill":
-            value = str(action.get("text", ""))
+            raw = str(action.get("text", ""))
+            element = (await self.current()).find(int(action["index"]))
+            is_token = bool(self.vault and self.vault.contains_token(raw))
+
+            # A sensitive field may only be filled from the vault. If a planner
+            # ever invents a password, refuse it rather than type it.
+            if element is not None and element.sensitive and not is_token:
+                raise PermissionError(
+                    f"element #{action['index']} is a credential field; "
+                    "it can only be filled with a vault token"
+                )
+
+            value = self.vault.resolve(raw) if self.vault else raw
             await locator.fill(value)
-            redacted = "*" * len(value) if action.get("secret") else value[:40]
-            return f"element #{action['index']} = {redacted!r}"
+            shown = "<secret>" if is_token else raw[:40]
+            return f"element #{action['index']} = {shown!r}"
 
         if kind == "select":
             value = str(action.get("text", ""))

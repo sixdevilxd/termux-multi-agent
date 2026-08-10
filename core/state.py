@@ -31,16 +31,23 @@ class PageInfo:
 @dataclass
 class Task:
     id: str
-    type: str  # quiz | quest | checkin | claim | survey | other
+    type: str  # quiz | quest | checkin | claim | survey | lesson | other
     title: str
     url: str
     why: str = ""
     confidence: float = 0.0
+    priority: int = 3  # 1 = do first, 5 = do last
+    effort: str = ""  # low | medium | high
+    reward: str = ""  # what the site says you get
     status: str = "pending"  # pending | planning | running | verified | failed | skipped
     attempts: int = 0
     steps: list[dict[str, Any]] = field(default_factory=list)
     evidence: dict[str, Any] = field(default_factory=dict)
     error: str = ""
+
+    def rank(self) -> tuple[int, float]:
+        """Sort key: priority first, confidence breaks ties."""
+        return (self.priority, -self.confidence)
 
 
 @dataclass
@@ -53,12 +60,29 @@ class RunState:
     logged_in: bool = False
     login_method: str = ""
     actions_used: int = 0
+    # What the site actually is, in the agent's own words. Written by the
+    # SiteUnderstanding agent and used to steer discovery and mining.
+    understanding: dict[str, Any] = field(default_factory=dict)
+    # Reward counters read from the site's own vocabulary, before and after.
+    reward_baseline: dict[str, float] = field(default_factory=dict)
+    reward_final: dict[str, float] = field(default_factory=dict)
     pages: list[PageInfo] = field(default_factory=list)
     tasks: list[Task] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     error: str = ""
 
     # ── helpers ──────────────────────────────────────────────────────────────
+    @property
+    def vocabulary(self) -> list[str]:
+        """Site-specific reward words, e.g. ['Sparks', 'Streak', 'Tier']."""
+        return [str(w) for w in self.understanding.get("reward_vocabulary", []) if w]
+
+    def reward_delta(self) -> dict[str, float]:
+        return {
+            k: round(v - self.reward_baseline.get(k, 0.0), 2)
+            for k, v in self.reward_final.items()
+            if v != self.reward_baseline.get(k)
+        }
     @property
     def path(self) -> Path:
         return settings.runs_dir / f"{self.run_id}.json"

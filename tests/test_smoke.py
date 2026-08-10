@@ -165,6 +165,120 @@ def test_unknown_provider_is_reported():
     assert any("Unknown LLM_PROVIDER" in p for p in s.validate())
 
 
+# ── credential isolation ─────────────────────────────────────────────────────
+def test_vault_hands_out_tokens_not_plaintext():
+    from core.secrets import SecretVault
+
+    vault = SecretVault()
+    token = vault.put("password", "hunter2secret")
+    assert "hunter2secret" not in token
+    assert vault.is_token(token)
+    assert vault.resolve(token) == "hunter2secret"
+    assert vault.describe(token) == "<password>"
+
+
+def test_vault_redacts_secrets_from_outbound_text():
+    from core.secrets import SecretVault
+
+    vault = SecretVault()
+    vault.put("password", "hunter2secret")
+    leaked = "the form now shows hunter2secret in it"
+    assert "hunter2secret" not in vault.redact(leaked)
+    assert "[REDACTED]" in vault.redact(leaked)
+
+
+def test_vault_redacts_longest_secret_first():
+    from core.secrets import SecretVault
+
+    vault = SecretVault()
+    vault.put("short", "abcd1234")
+    vault.put("long", "abcd1234efgh")
+    assert vault.redact("value=abcd1234efgh") == "value=[REDACTED]"
+
+
+def test_vault_refuses_unredactable_secret():
+    from core.secrets import SecretVault
+
+    with pytest.raises(ValueError):
+        SecretVault().put("pin", "12")
+
+
+def test_vault_clear_removes_everything():
+    from core.secrets import SecretVault
+
+    vault = SecretVault()
+    vault.put("password", "hunter2secret")
+    vault.clear()
+    assert len(vault) == 0
+    assert vault.redact("hunter2secret") == "hunter2secret"
+
+
+def test_llm_client_scrubs_prompts_through_the_vault():
+    from core.llm import LLMClient
+    from core.secrets import SecretVault
+
+    vault = SecretVault()
+    vault.put("password", "hunter2secret")
+    client = LLMClient(vault=vault)
+    assert "hunter2secret" not in client._scrub("page text hunter2secret here")
+
+
+# ── reward vocabulary ────────────────────────────────────────────────────────
+def test_counters_use_the_sites_own_words():
+    from core.rewards import extract_counters
+
+    text = "You have 1,240 Sparks and a 7 day Streak"
+    counters = extract_counters(text, ["Sparks", "Streak"])
+    assert counters["sparks"] == 1240.0
+    assert counters["streak"] == 7.0
+
+
+def test_counters_still_find_generic_units_without_vocabulary():
+    from core.rewards import extract_counters
+
+    assert extract_counters("Total: 350 XP", [])["xp"] == 350.0
+
+
+def test_counters_handle_unit_before_number():
+    from core.rewards import extract_counters
+
+    assert extract_counters("Poin: 88", ["Poin"])["poin"] == 88.0
+
+
+def test_counters_prefer_the_running_total_over_an_increment():
+    from core.rewards import extract_counters
+
+    text = "+10 XP earned. Your balance is 1,250 XP."
+    assert extract_counters(text, [])["xp"] == 1250.0
+
+
+def test_counter_diff_reports_only_movement():
+    from core.rewards import describe_delta, diff_counters
+
+    delta = diff_counters({"xp": 100.0, "gems": 5.0}, {"xp": 150.0, "gems": 5.0})
+    assert delta == {"xp": 50.0}
+    assert describe_delta(delta) == "xp +50"
+
+
+def test_state_exposes_learned_vocabulary_and_delta():
+    state = RunState(target_url="https://x")
+    state.understanding = {"reward_vocabulary": ["Sparks"]}
+    state.reward_baseline = {"sparks": 10.0}
+    state.reward_final = {"sparks": 35.0}
+    assert state.vocabulary == ["Sparks"]
+    assert state.reward_delta() == {"sparks": 25.0}
+
+
+# ── task ranking ─────────────────────────────────────────────────────────────
+def test_tasks_sort_by_priority_then_confidence():
+    tasks = [
+        Task(id="a", type="quiz", title="low prio", url="u", priority=4, confidence=0.9),
+        Task(id="b", type="quiz", title="high prio", url="u", priority=1, confidence=0.5),
+        Task(id="c", type="quiz", title="high prio, surer", url="u", priority=1, confidence=0.8),
+    ]
+    assert [t.id for t in sorted(tasks, key=lambda t: t.rank())] == ["c", "b", "a"]
+
+
 # ── event bus ────────────────────────────────────────────────────────────────
 def test_bus_delivers_and_isolates_failures():
     bus = EventBus()

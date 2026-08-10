@@ -11,15 +11,18 @@ USER ──url──> ORCHESTRATOR
             BROWSER AGENT  (Chromium over CDP)
                    │
                    ▼
-            LOGIN DETECTOR ──── form / one-click
+            LOGIN DETECTOR ──── form · one-click · already-authenticated
                    │
              OTP or CAPTCHA? ──► HUMAN GATE (Telegram)
                    │
                    ▼
-            DISCOVERY AGENT  (BFS site map)
-                   │
+        SITE UNDERSTANDING  "what is this product, and what does
+                   │         it call its rewards?"
                    ▼
-             TASK MINER (AI)  quiz · quest · check-in · claim
+            DISCOVERY AGENT  steered by the learned vocabulary,
+                   │         re-ranked by the model as it goes
+                   ▼
+             TASK MINER (AI)  classify · score · prioritise
                    │
                    ▼
           ┌──► TASK PLANNER ──► BROWSER AGENT ──► VERIFIER ──┐
@@ -30,18 +33,27 @@ USER ──url──> ORCHESTRATOR
                 REPORT (markdown + Telegram)
 ```
 
+The agent is given one standing goal:
+
+> *Understand this website and identify legitimate activities that can generate
+> points, XP, badges, rewards, or campaign progress — even when those
+> activities are not explicitly labelled as tasks, quests, or missions.*
+
 ---
 
 ## Why this design
 
 | Decision | Reason |
 | --- | --- |
+| **Understand the site before crawling it** | A hardcoded keyword list (`quest`, `reward`, ...) silently misses any site that calls its currency "Sparks" or writes its UI in Indonesian. The agent learns the site's own vocabulary first, then explores with it. |
+| **Credentials never reach the model** | Secrets live in a vault and travel as `{{secret:s1}}` tokens. Only the browser layer resolves them, in the statement before typing. Every prompt is scrubbed on the way out. |
+| **Reward counters are the primary success signal** | "The button was clicked" ≠ "the task completed". If `Sparks` went from 1,240 to 1,290, it worked — no model opinion required. |
 | **Plan 1-4 actions at a time**, not a full script | SPAs mutate under you. A 20-step plan written up front is fiction. |
 | **Indexed DOM snapshot**, not raw HTML | Raw HTML destroys the context window. We send only what is clickable, plus a text digest. |
-| **Verifier can send a task back to the planner** | "The button was clicked" ≠ "the task completed". Failure carries a retry hint. |
+| **Verifier can send a task back to the planner** | Failure carries a retry hint, so the loop is a loop and not a straight line. |
 | **Guardrails run before every action** | Domain lock + destructive-intent filter + hard action budget. An autonomous loop needs a brake. |
 | **OTP/CAPTCHA suspend on an `asyncio.Future`** | The pipeline pauses exactly where it stopped and resumes on your Telegram reply. No polling, no restart. |
-| **Session saved per domain** | Log in once. Later runs restore cookies and skip straight to discovery. |
+| **Session saved per domain** | Log in once. Later runs restore cookies and skip straight to understanding. |
 | **CDP mode by default** | Playwright cannot ship a Chromium binary for Android. We attach to one Termux installs itself. |
 
 ---
@@ -102,6 +114,41 @@ In Telegram:
 3. `./scripts/start_chromium.sh &` — jalankan Chromium dengan port CDP.
 4. `python run.py --bot` — bot aktif, lalu kirim `/run <url>` di Telegram.
 5. Kalau kena OTP atau CAPTCHA, bot akan bertanya. Balas dengan `/reply <token> <jawaban>`.
+
+---
+
+## Login is adaptive
+
+The agent does not assume every site behaves the same way.
+
+| Case | What happens |
+| --- | --- |
+| **Already authenticated** | A saved session is restored; login is skipped entirely. |
+| **Email + password** | Fields are located by type and metadata, filled from the vault, submitted, then verified. |
+| **One-click sign-in** | "Continue with Google", "Sign in with X", wallet buttons — detected and followed. |
+| **OTP** | Run pauses. Telegram asks you for the code. You reply. Run resumes. |
+| **CAPTCHA** | Run pauses. You solve it. The agent detects authentication success and continues. |
+
+### Credentials never reach the AI model
+
+This is enforced by the architecture, not by convention:
+
+1. The human gate collects the secret and puts it straight into an in-memory
+   vault, which returns an opaque token: `{{secret:s1}}`.
+2. The planner, the run state, the logs and the report only ever see that token.
+3. `BrowserAgent` resolves the token in the statement immediately before
+   `locator.fill()` — the browser layer is the only place plaintext exists.
+4. Every prompt is passed through `vault.redact()` before egress, so a secret
+   that somehow lands in a page digest is scrubbed anyway.
+5. A field detected as sensitive (`password`, `otp`, `pin`, `cvv`, `token`, ...)
+   **can only be filled from a vault token**. If a planner ever invents a
+   password, the action is refused rather than typed.
+6. The DOM snapshot never reads the value of a sensitive input in the first
+   place.
+7. The vault is cleared when the run ends.
+
+Sessions are persisted locally per domain in `storage/sessions/`, mode `0600`,
+gitignored — so you log in once, not once per run.
 
 ---
 
@@ -190,15 +237,19 @@ authoritative list for whichever gateway you configured and flags your
 config/settings.py     typed config, loaded once
 core/bus.py            async event bus (agents → Telegram/CLI)
 core/state.py          RunState, persisted after every phase
-core/llm.py            provider-agnostic LLM client
+core/llm.py            provider-agnostic LLM client, scrubs every prompt
+core/secrets.py        credential vault — tokens out, plaintext never
+core/rewards.py        reward-counter parser built from learned vocabulary
 core/guardrails.py     domain lock · intent filter · action budget
 browser/driver.py      Playwright lifecycle, CDP attach
-browser/dom.py         indexed snapshot of interactive elements
+browser/dom.py         indexed snapshot; never reads secret field values
 browser/session.py     per-domain cookie persistence
-agents/                base · browser · login · discovery · miner
-                       · planner · verifier · reporter · orchestrator
+agents/                base · browser · login · site_understanding
+                       · discovery · task_miner · planner · verifier
+                       · reporter · orchestrator
 tgbot/bot.py           Telegram commands
 tgbot/human_gate.py    OTP/CAPTCHA suspension
+tests/                 offline suite — no browser, network or API key needed
 ```
 
 ---

@@ -40,10 +40,24 @@ class LoginPlan:
 class LoginDetector(Agent):
     name = "login"
 
-    def __init__(self, bus, state, browser: BrowserAgent, human_gate, llm=None) -> None:
+    def __init__(self, bus, state, browser: BrowserAgent, human_gate, llm=None, vault=None) -> None:
         super().__init__(bus, state, llm)
         self.browser = browser
         self.gate = human_gate
+        # Credentials go straight into the vault and are referenced by token.
+        # This agent never holds plaintext longer than one statement.
+        self.vault = vault
+
+    def _stash(self, label: str, value: str) -> str:
+        """Vault a credential and return the token to type into the page."""
+        if not value:
+            return ""
+        if self.vault is None:
+            return value
+        try:
+            return self.vault.put(label, value)
+        except ValueError:
+            return value  # too short to redact safely; still never logged
 
     # ── detection ────────────────────────────────────────────────────────────
     @staticmethod
@@ -100,14 +114,22 @@ class LoginDetector(Agent):
             creds = credentials or {}
             email = creds.get("email") or await self.gate.ask("Email / username for login?")
             password = creds.get("password") or await self.gate.ask(
-                "Password? (sent only to the target site)", secret=True
+                "Password? (typed straight into the site — never sent to the AI model)",
+                secret=True,
             )
             if not email or not password:
                 await self.fail("Login aborted — credentials not supplied.")
                 return False
-            await self.browser.execute({"action": "fill", "index": plan.email_index, "text": email})
+
+            email_token = self._stash("username", email)
+            password_token = self._stash("password", password)
+            del email, password  # plaintext lives in the vault from here on
+
             await self.browser.execute(
-                {"action": "fill", "index": plan.password_index, "text": password, "secret": True}
+                {"action": "fill", "index": plan.email_index, "text": email_token}
+            )
+            await self.browser.execute(
+                {"action": "fill", "index": plan.password_index, "text": password_token}
             )
             if plan.submit_index is not None:
                 await self.browser.execute({"action": "click", "index": plan.submit_index})
@@ -165,7 +187,11 @@ class LoginDetector(Agent):
                 )
                 if otp_field:
                     await self.browser.execute(
-                        {"action": "fill", "index": otp_field.index, "text": code, "secret": True}
+                        {
+                            "action": "fill",
+                            "index": otp_field.index,
+                            "text": self._stash("otp", code),
+                        }
                     )
                     await self.browser.execute({"action": "press", "key": "Enter"})
                 continue

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from agents.base import Agent
 from config.settings import settings
+from core.rewards import describe_delta
 from core.state import RunState
 
 STATUS_ICON = {
@@ -55,16 +56,64 @@ class Reporter(Agent):
         if state.error:
             lines += ["> **Run error:** " + state.error, ""]
 
+        understanding = state.understanding
+        if understanding.get("site_purpose"):
+            lines += [
+                "## What this site is",
+                "",
+                understanding["site_purpose"],
+                "",
+            ]
+            if understanding.get("site_type"):
+                lines.append(f"- category: `{understanding['site_type']}`")
+            if state.vocabulary:
+                lines.append(
+                    "- reward vocabulary: "
+                    + ", ".join(f"`{w}`" for w in state.vocabulary)
+                )
+            for system in understanding.get("reward_systems", []):
+                lines.append(
+                    f"- reward system: **{system.get('name', '?')}** "
+                    f"— {system.get('where', '')} {system.get('evidence', '')}".rstrip()
+                )
+            lines.append("")
+
+        delta = state.reward_delta()
+        if state.reward_baseline or delta:
+            lines += ["## Rewards", ""]
+            if state.reward_baseline:
+                lines.append(
+                    "- before: "
+                    + ", ".join(f"{k}={v:g}" for k, v in sorted(state.reward_baseline.items()))
+                )
+            if state.reward_final:
+                lines.append(
+                    "- after: "
+                    + ", ".join(f"{k}={v:g}" for k, v in sorted(state.reward_final.items()))
+                )
+            lines.append(f"- change: **{describe_delta(delta) or 'none detected'}**")
+            lines.append("")
+
         lines += ["## Tasks", ""]
         if not state.tasks:
             lines.append("_No actionable tasks were found on this site._")
         for task in state.tasks:
             icon = STATUS_ICON.get(task.status, "[?]")
             lines.append(f"### {icon} {task.title}")
+            meta = [
+                f"type: `{task.type}`",
+                f"priority: P{task.priority}",
+                f"confidence: {task.confidence:.2f}",
+                f"attempts: {task.attempts}",
+            ]
+            if task.effort:
+                meta.insert(2, f"effort: {task.effort}")
             lines += [
-                f"- type: `{task.type}` · confidence: {task.confidence:.2f} · attempts: {task.attempts}",
+                "- " + " · ".join(meta),
                 f"- url: {task.url}",
             ]
+            if task.reward:
+                lines.append(f"- reward: {task.reward}")
             if task.why:
                 lines.append(f"- rationale: {task.why}")
             if task.evidence:
@@ -91,10 +140,15 @@ class Reporter(Agent):
             f"Login: {'yes' if state.logged_in else 'no'} · Pages: {len(state.pages)} · "
             f"Actions: {state.actions_used}",
             f"Tasks: {verified}/{len(state.tasks)} verified",
-            "",
         ]
+        if state.understanding.get("site_type"):
+            head.insert(2, f"Site: {state.understanding['site_type']}")
+        delta = describe_delta(state.reward_delta())
+        if delta:
+            head.append(f"Rewards: {delta}")
+        head.append("")
         for task in state.tasks[:12]:
-            head.append(f"{STATUS_ICON.get(task.status, '[?]')} {task.title}")
+            head.append(f"{STATUS_ICON.get(task.status, '[?]')} P{task.priority} {task.title}")
         if len(state.tasks) > 12:
             head.append(f"... and {len(state.tasks) - 12} more")
         return "\n".join(head)

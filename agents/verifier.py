@@ -12,6 +12,7 @@ from typing import Any
 
 from agents.base import Agent
 from browser.dom import Snapshot
+from core.rewards import describe_delta, diff_counters, extract_counters
 from core.state import Task
 
 SUCCESS_HINTS = re.compile(
@@ -22,7 +23,6 @@ SUCCESS_HINTS = re.compile(
 FAILURE_HINTS = re.compile(
     r"\b(error|failed|gagal|try again|something went wrong|not eligible|expired)\b", re.I
 )
-POINTS = re.compile(r"([+-]?\d[\d,\.]*)\s*(xp|points?|poin|coins?|credits?|gems?)\b", re.I)
 
 SYSTEM = """You verify whether a web task was completed.
 
@@ -87,14 +87,27 @@ class Verifier(Agent):
 
     # ── deterministic signals ────────────────────────────────────────────────
     def _heuristics(self, before: Snapshot, after: Snapshot) -> Verdict | None:
+        """Cheap, unambiguous evidence. Strongest signal first."""
         tail = after.digest[-1500:]
+        vocab = self.state.vocabulary
+
+        # A reward counter moving is the one signal a model cannot talk us out of.
+        gained = {
+            unit: value
+            for unit, value in diff_counters(
+                extract_counters(before.digest, vocab),
+                extract_counters(after.digest, vocab),
+            ).items()
+            if value > 0
+        }
+        if gained:
+            return Verdict(
+                True, 0.92, f"reward counters moved: {describe_delta(gained)}",
+                source="counter-delta",
+            )
 
         if FAILURE_HINTS.search(tail) and not SUCCESS_HINTS.search(tail):
             return Verdict(False, 0.8, _first_match(FAILURE_HINTS, tail), "page reported an error")
-
-        delta = _points_delta(before.digest, after.digest)
-        if delta is not None and delta > 0:
-            return Verdict(True, 0.9, f"score increased by {delta}", source="points-delta")
 
         if SUCCESS_HINTS.search(tail):
             return Verdict(True, 0.75, _first_match(SUCCESS_HINTS, tail), source="success-text")
@@ -108,18 +121,3 @@ def _first_match(pattern: re.Pattern[str], text: str, window: int = 90) -> str:
         return ""
     start = max(0, match.start() - window // 2)
     return text[start : start + window].strip()
-
-
-def _points_delta(before: str, after: str) -> float | None:
-    def total(text: str) -> float | None:
-        values = [
-            float(m.group(1).replace(",", ""))
-            for m in POINTS.finditer(text)
-            if m.group(1).replace(",", "").replace(".", "").isdigit()
-        ]
-        return sum(values) if values else None
-
-    a, b = total(before), total(after)
-    if a is None or b is None:
-        return None
-    return b - a

@@ -14,6 +14,7 @@ import httpx
 
 from config.settings import settings
 from core.logger import get_logger
+from core.secrets import SecretVault
 
 log = get_logger("llm")
 
@@ -52,14 +53,20 @@ def extract_json(text: str) -> Any:
 
 
 class LLMClient:
-    def __init__(self, timeout: float = 120.0) -> None:
+    def __init__(self, timeout: float = 120.0, vault: "SecretVault | None" = None) -> None:
         self.provider = settings.llm_provider
         self.model = settings.llm_model
         # Host + version segment, derived from LLM_BASE_URL. Writing just
         # `agentrouter.org` in .env is enough; the /v1 is added here.
         self.api_root = settings.api_root
         self.api_key = settings.llm_api_key
+        # Every prompt is scrubbed through this before egress. Credentials must
+        # never reach a model, even by accident via a DOM digest.
+        self.vault = vault
         self._client = httpx.AsyncClient(timeout=timeout)
+
+    def _scrub(self, text: str) -> str:
+        return self.vault.redact(text) if self.vault else text
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -67,6 +74,7 @@ class LLMClient:
     async def chat(self, system: str, user: str, temperature: float = 0.1) -> str:
         if not self.api_key:
             raise LLMError("LLM_API_KEY is not set.")
+        system, user = self._scrub(system), self._scrub(user)
         if self.provider == "anthropic":
             return await self._anthropic(system, user, temperature)
         if self.provider == "gemini":

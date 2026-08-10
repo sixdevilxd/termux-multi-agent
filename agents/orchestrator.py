@@ -15,6 +15,7 @@ from agents.discovery import DiscoveryAgent
 from agents.login_detector import LoginDetector
 from agents.planner import TaskPlanner
 from agents.reporter import Reporter
+from agents.site_understanding import SiteUnderstanding
 from agents.task_miner import TaskMiner
 from agents.verifier import Verifier
 from browser.driver import BrowserDriver
@@ -23,6 +24,8 @@ from core.bus import Event, EventBus
 from core.guardrails import Guardrails
 from core.llm import LLMClient
 from core.logger import get_logger
+from core.rewards import describe_delta, extract_counters
+from core.secrets import SecretVault
 from core.state import RunState, Task
 
 log = get_logger("orchestrator")
@@ -46,8 +49,12 @@ class Orchestrator:
         self.credentials = credentials or {}
         self.max_tasks = max_tasks
         self.guardrails = Guardrails(target_url)
-        self.llm = LLMClient()
+        # One vault per run. The LLM client is bound to it so every prompt is
+        # scrubbed on the way out.
+        self.vault = SecretVault()
+        self.llm = LLMClient(vault=self.vault)
         self._cancelled = False
+        self._browser: BrowserAgent | None = None
 
     def cancel(self) -> None:
         self._cancelled = True
@@ -72,8 +79,10 @@ class Orchestrator:
         try:
             await driver.start()
             browser = BrowserAgent(
-                self.bus, state, driver, self.guardrails, self.llm, dry_run=settings.dry_run
+                self.bus, state, driver, self.guardrails, self.llm,
+                dry_run=settings.dry_run, vault=self.vault,
             )
+            self._browser = browser
 
             # 1. open the target
             state.phase = "open"
@@ -83,27 +92,33 @@ class Orchestrator:
 
             # 2. authenticate
             state.phase = "login"
-            login = LoginDetector(self.bus, state, browser, self.gate, self.llm)
+            login = LoginDetector(self.bus, state, browser, self.gate, self.llm, self.vault)
             await login.run(self.credentials)
             state.save()
             if self._cancelled:
                 return await self._finish(state, "cancelled during login")
 
-            # 3. explore
+            # 3. understand what this site is before exploring it
+            state.phase = "understanding"
+            await SiteUnderstanding(self.bus, state, self.llm).run(await browser.refresh())
+            if self._cancelled:
+                return await self._finish(state, "cancelled during understanding")
+
+            # 4. explore, steered by what we just learned
             state.phase = "discovery"
-            pages = await DiscoveryAgent(self.bus, state, browser, self.guardrails).run(
-                state.target_url
-            )
+            pages = await DiscoveryAgent(
+                self.bus, state, browser, self.guardrails, self.llm
+            ).run(state.target_url)
             if self._cancelled:
                 return await self._finish(state, "cancelled during discovery")
 
-            # 4. mine tasks
+            # 5. mine, classify and prioritise
             state.phase = "mining"
             tasks = await TaskMiner(self.bus, state, self.llm).run(pages)
             if not tasks:
                 return await self._finish(state, "no actionable tasks found")
 
-            # 5. execute
+            # 6. execute
             state.phase = "executing"
             planner = TaskPlanner(self.bus, state, self.llm)
             verifier = Verifier(self.bus, state, self.llm)
@@ -128,6 +143,8 @@ class Orchestrator:
             except Exception:
                 pass
             await self.llm.aclose()
+            # plaintext credentials never outlive the run
+            self.vault.clear()
 
     # ── single task loop ─────────────────────────────────────────────────────
     async def _run_task(
@@ -194,6 +211,20 @@ class Orchestrator:
     async def _finish(self, state: RunState, note: str) -> RunState:
         if note:
             state.notes.append(note)
+
+        # Read the reward counters one last time so the report can show what
+        # the run actually earned, in the site's own units.
+        if self._browser is not None:
+            try:
+                snap = await self._browser.current()
+                state.reward_final = extract_counters(snap.digest, state.vocabulary)
+                delta = state.reward_delta()
+                if delta:
+                    state.notes.append(f"reward change: {describe_delta(delta)}")
+                    await self._announce("done", f"Rewards moved: {describe_delta(delta)}")
+            except Exception:
+                pass
+
         if self.guardrails.blocked:
             state.notes.append(
                 f"guardrails blocked {len(self.guardrails.blocked)} action(s): "
